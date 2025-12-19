@@ -1,0 +1,48 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classroom Schedule Management</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Classroom Schedule Management</h1>
+        </header>
+        
+        <div class="upload-section">
+            <h2>Upload New Schedule (PDF)</h2>
+            <div class="upload-container">
+                <input type="file" id="pdfFile" accept=".pdf" />
+                <label for="pdfFile" class="upload-label">Choose PDF File</label>
+                <button id="uploadBtn" class="btn-primary">Upload & Parse</button>
+            </div>
+            <div id="uploadStatus" class="status-message"></div>
+        </div>
+        
+        <div class="schedule-preview">
+            <h2>Current Schedule</h2>
+            <div id="scheduleContainer">
+                <div class="loading">Loading schedule...</div>
+            </div>
+            <div class="schedule-actions">
+                <button id="sendToDeviceBtn" class="btn-secondary">Send Schedule to Devices</button>
+            </div>
+        </div>
+        
+        <div class="device-status">
+            <h2>Connected Devices</h2>
+            <div id="esp32List">
+                <div class="loading">Loading devices...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Supabase Client SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js"></script>
+</body>
+</html>
