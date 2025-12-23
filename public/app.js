@@ -16,36 +16,72 @@ document.addEventListener('DOMContentLoaded', () => {
     // ====== DEVICE MANAGEMENT ======
     refreshBtn.addEventListener('click', fetchDevices);
 
-    async function fetchDevices() {
-        deviceList.innerHTML = '<p class="text-gray-500">Fetching devices...</p>';
-        const { data, error } = await supabase.from('devices').select('*');
+ async function fetchDevices() {
+    deviceList.innerHTML = '<p class="text-gray-500">Fetching devices...</p>';
+    const { data, error } = await supabase.from('devices').select('*');
 
-        if (error) {
-            console.error('Error fetching devices:', error);
-            deviceList.innerHTML = '<p class="text-red-500">Failed to fetch devices.</p>';
-            return;
-        }
-
-        deviceList.innerHTML = '';
-        if (data.length === 0) {
-            deviceList.innerHTML = '<p class="text-gray-500">No devices found. Make sure your ESP and Cloud Service are running.</p>';
-        } else {
-            data.forEach(device => {
-                const deviceEl = document.createElement('div');
-                deviceEl.className = 'device-item';
-                deviceEl.innerHTML = `
-                    <span>
-                        <strong>ID:</strong> ${device.module_id} <br>
-                        <strong>Network:</strong> ${device.network} <br>
-                        <strong>Last Seen:</strong> ${new Date(device.last_seen).toLocaleString()}
-                    </span>
-                    <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Online</span>
-                `;
-                deviceList.appendChild(deviceEl);
-            });
-        }
+    if (error) {
+        console.error('Error fetching devices:', error);
+        deviceList.innerHTML = '<p class="text-red-500">Failed to fetch devices.</p>';
+        return;
     }
 
+    deviceList.innerHTML = '';
+    if (data.length === 0) {
+        deviceList.innerHTML = '<p class="text-gray-500">No devices found. Make sure your ESP and Cloud Service are running.</p>';
+    } else {
+        data.forEach(device => {
+            const deviceContainer = document.createElement('div');
+            deviceContainer.className = 'bg-white p-4 rounded-lg shadow-md border border-gray-200';
+
+            // Main device info
+            const mainInfo = document.createElement('div');
+            mainInfo.className = 'flex justify-between items-center';
+            mainInfo.innerHTML = `
+                <span>
+                    <strong>ID:</strong> ${device.module_id} <br>
+                    <strong>Network:</strong> ${device.network} <br>
+                    <strong>Last Seen:</strong> ${new Date(device.last_seen).toLocaleString()}
+                </span>
+                <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Online</span>
+            `;
+            deviceContainer.appendChild(mainInfo);
+
+            // Collapsible parameters section
+            if (device.parameters) {
+                const details = document.createElement('details');
+                const summary = document.createElement('summary');
+                summary.textContent = 'Device Parameters';
+                details.appendChild(summary);
+
+                const paramsDiv = document.createElement('div');
+                paramsDiv.className = 'mt-2 space-y-1';
+
+                // Create a list item for each parameter
+                Object.entries(device.parameters).forEach(([key, value]) => {
+                    const paramItem = document.createElement('div');
+                    paramItem.className = 'parameter-item';
+                    paramItem.innerHTML = `
+                        <span class="font-medium text-gray-600">${key.replace(/_/g, ' ')}:</span>
+                        <span class="text-gray-800">${value}</span>
+                    `;
+                    paramsDiv.appendChild(paramItem);
+                });
+
+                details.appendChild(paramsDiv);
+                deviceContainer.appendChild(details);
+            } else {
+                // Show a message if parameters are not yet available
+                const noParams = document.createElement('p');
+                noParams.className = 'text-xs text-gray-500 mt-2';
+                noParams.textContent = 'Parameters not yet available...';
+                deviceContainer.appendChild(noParams);
+            }
+
+            deviceList.appendChild(deviceContainer);
+        });
+    }
+}
     // ====== SCHEDULE UPLOAD ======
     dropZone.addEventListener('click', () => pdfInput.click());
     dropZone.addEventListener('dragover', (e) => {
@@ -131,3 +167,4 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchDevices();
 
 });
+
