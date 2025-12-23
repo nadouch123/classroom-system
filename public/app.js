@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     // ====== CONFIGURATION ======
     const SUPABASE_URL = "https://wmslmgdgxfogaftdweio.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indtc2xtZ2RneGZvZ2FmdGR3ZWlvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjA1NzA3NSwiZXhwIjoyMDgxNjMzMDc1fQ.sqTmkXXdAZS9QCRKrZpas7tvGRkwWjX7VUmvAjDf7YY";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indtc2xtZ2RneGZvZ2FmdGR3ZWlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNTcwNzUsImV4cCI6MjA4MTYzMzA3NX0.nsi5Uv8fiw1c1j2pavQvnPeGHZoHHO0GiS6A1fmmt3c";
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -129,4 +129,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial load
     fetchDevices();
+
 });
