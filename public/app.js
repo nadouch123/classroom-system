@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-    // ====== PDF EXTRACTION + GROQ AI ======
+        // ====== PDF EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -123,11 +123,12 @@ document.addEventListener('DOMContentLoaded', () => {
         pdfStatus.innerText = "⏳ Reading PDF and asking AI to organize it...";
         parsePdfBtn.disabled = true;
 
-        try {
-            // 1. Extract raw text from PDF
-            const reader = new FileReader();
-            reader.readAsArrayBuffer(file);
-            reader.onload = async () => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(file);
+        
+        reader.onload = async () => {
+            try {
+                // 1. Extract raw text
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 let rawText = "";
@@ -135,22 +136,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    textContent.items.forEach(item => {
-                        rawText += item.str + " ";
-                    });
+                    textContent.items.forEach(item => { rawText += item.str + " "; });
                     rawText += "\n";
                 }
 
-                if (rawText.length === 0) {
-                    throw new Error("Could not extract any text from this PDF.");
+                if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
+
+                // Check if API key is set
+                if (GROQ_API_KEY === "gsk_VOTRE_CLE_ICI" || !GROQ_API_KEY) {
+                    throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
                 }
 
-                // 2. Send raw text to Groq AI to organize it
-                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a university schedule PDF. 
-                The text is messy because PDF tables lose their columns. 
-                Identify all class sessions. Return ONLY a valid JSON array of objects. 
-                Each object must have exactly these keys: "day" (must be in English: Monday, Tuesday, etc.), "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
-                If a field is missing, use an empty string "". Do not include markdown formatting like \`\`\`json.
+                // 2. Send to Groq AI
+                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a schedule PDF. 
+                Return ONLY a valid JSON array of objects. 
+                Each object must have exactly these keys: "day" (Monday, Tuesday, etc.), "start" (HH:MM), "end" (HH:MM), "subject", "professor", "section". 
+                Do not include markdown formatting or extra text.
                 
                 Raw Text:
                 ${rawText}`;
@@ -168,16 +169,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
 
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error.message);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error?.message || `API Error: ${response.status}`);
                 }
 
+                const data = await response.json();
+                
                 if (data.choices && data.choices.length > 0) {
                     let aiText = data.choices[0].message.content;
-                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const parsedClasses = JSON.parse(aiText);
+                    
+                    // Robust JSON extraction (in case AI adds extra text)
+                    const jsonStart = aiText.indexOf('[');
+                    const jsonEnd = aiText.lastIndexOf(']');
+                    if (jsonStart === -1 || jsonEnd === -1) {
+                        throw new Error("AI did not return valid JSON.");
+                    }
+                    const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
+                    const parsedClasses = JSON.parse(jsonString);
                     
                     // 3. Add to schedule
                     let addedCount = 0;
@@ -201,17 +210,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     throw new Error("AI returned no data.");
                 }
-            };
-        } catch (e) {
-            console.error(e);
-            pdfStatus.classList.remove('text-indigo-800');
-            pdfStatus.classList.add('text-red-600');
-            pdfStatus.innerText = `❌ Error: ${e.message}`;
-        } finally {
-            parsePdfBtn.disabled = false;
-        }
+            } catch (e) {
+                console.error("AI Extraction Error:", e);
+                pdfStatus.classList.remove('text-indigo-800');
+                pdfStatus.classList.add('text-red-600');
+                pdfStatus.innerText = `❌ Error: ${e.message}`;
+            } finally {
+                parsePdfBtn.disabled = false;
+            }
+        };
     });
-
     // ====== MQTT CONNECTION ======
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
