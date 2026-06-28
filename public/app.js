@@ -8,9 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_PORT = 8884; 
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
-
-    // FIXED: Hardcoded your API key so it works in the browser
-    const GEMINI_API_KEY = "AQ.Ab8RN6LDbAQ05plipR0HOjUFyEveaX9e9pflnRdpV7GarnAS3w"; 
     
     let mqttClient;
     let isConnected = false;
@@ -54,6 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const pdfUpload = document.getElementById('pdfUpload');
     const parsePdfBtn = document.getElementById('parsePdfBtn');
     const pdfStatus = document.getElementById('pdfStatus');
+    const bulkPasteArea = document.getElementById('bulkPasteArea');
+    const parsePasteBtn = document.getElementById('parsePasteBtn');
 
     // ====== AUTHENTICATION LOGIC ======
     loginBtn.addEventListener('click', async () => {
@@ -91,15 +90,12 @@ document.addEventListener('DOMContentLoaded', () => {
             loginScreen.classList.add('hidden');
             appScreen.classList.remove('hidden');
             appScreen.classList.add('fade-in');
-            // Initialize app logic only after login
             initApp(); 
         } else {
             loginScreen.classList.remove('hidden');
             appScreen.classList.add('hidden');
         }
     }
-
-    // Run auth check on load
     checkAuth();
 
     // ====== APP INITIALIZATION ======
@@ -113,20 +109,18 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-    // ====== AI PDF EXTRACTION LOGIC ======
-        // Configure PDF.js worker
+    // ====== PDF.JS LOCAL EXTRACTION ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
 
-    // ====== LOCAL PDF EXTRACTION LOGIC (NO API NEEDED) ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reading PDF locally...";
+        pdfStatus.innerText = "⏳ Extracting text from PDF...";
         parsePdfBtn.disabled = true;
 
         try {
@@ -134,8 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
             reader.readAsArrayBuffer(file);
             reader.onload = async () => {
                 const typedArray = new Uint8Array(reader.result);
-                
-                // Read PDF using PDF.js
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 let extractedText = "";
                 
@@ -143,18 +135,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     textContent.items.forEach(item => {
-                        extractedText += item.str + " ";
+                        extractedText += item.str + "\t"; // Use tab as separator
                     });
                     extractedText += "\n";
                 }
 
-                // Clean up text and put it in the Bulk Paste area for the user to review
-                // Replace multiple spaces with tabs or newlines to help the parser
-                extractedText = extractedText.replace(/\s+/g, ' ').trim();
-                
                 if (extractedText.length > 0) {
-                    // We will auto-parse it directly
-                    parseExtractedText(extractedText);
+                    // Put extracted text into the Bulk Paste area for the user to see and parse
+                    bulkPasteArea.value = extractedText.replace(/\n\s*\n/g, '\n').trim();
+                    pdfStatus.innerText = "✅ Text extracted! Scroll down and click 'Parse & Add to Schedule'.";
                 } else {
                     pdfStatus.classList.remove('text-indigo-800');
                     pdfStatus.classList.add('text-red-600');
@@ -163,62 +152,43 @@ document.addEventListener('DOMContentLoaded', () => {
             };
         } catch (e) {
             console.error(e);
-            pdfStatus.classList.remove('text-indigo-800');
-            pdfStatus.classList.add('text-red-600');
             pdfStatus.innerText = `❌ Error reading PDF: ${e.message}`;
         } finally {
             parsePdfBtn.disabled = false;
         }
     });
 
-    function parseExtractedText(text) {
-        // Try to find patterns like "Monday 08:30 10:00 Math Smith A1"
-        // This is a basic parser. It looks for Day names and times.
-        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-        let addedCount = 0;
+    // ====== BULK PASTE PARSING LOGIC ======
+    parsePasteBtn.addEventListener('click', () => {
+        const text = bulkPasteArea.value.trim();
+        if (!text) return alert("Please extract or paste data first.");
         
-        // Split text into lines or chunks
         const lines = text.split('\n');
-        
-        lines.forEach(line => {
-            days.forEach(day => {
-                if (line.includes(day)) {
-                    // Find times like 08:30 or 08h30
-                    const timeMatches = line.match(/\b\d{1,2}[:h]\d{2}\b/gi);
-                    if (timeMatches && timeMatches.length >= 2) {
-                        let start = timeMatches[0].replace('h', ':').replace('H', ':');
-                        let end = timeMatches[1].replace('h', ':').replace('H', ':');
-                        
-                        // Try to guess subject (words after the second time)
-                        const parts = line.split(end);
-                        let subject = parts[1] ? parts[1].trim().split(' ').slice(0, 3).join(' ') : "General";
-                        subject = subject.replace(/[^a-zA-Z0-9\s]/g, '').trim();
+        let addedCount = 0;
 
-                        if (scheduleData.schedule[day]) {
-                            scheduleData.schedule[day].push({
-                                start: start,
-                                end: end,
-                                subject: subject || "General",
-                                professor: "",
-                                section: ""
-                            });
-                            addedCount++;
-                        }
-                    }
+        lines.forEach(line => {
+            // Split by Tab OR multiple spaces
+            const parts = line.split(/\t+|\s{2,}/).map(p => p.trim()).filter(p => p);
+            if (parts.length >= 4) {
+                let day = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
+                if (scheduleData.schedule[day]) {
+                    scheduleData.schedule[day].push({
+                        start: parts[1],
+                        end: parts[2],
+                        subject: parts[3] || "General",
+                        professor: parts[4] || "",
+                        section: parts[5] || ""
+                    });
+                    addedCount++;
                 }
-            });
+            }
         });
 
-        if (addedCount > 0) {
-            Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-            renderPreview(); updateSendButton();
-            pdfStatus.innerText = `✅ Success! Extracted and added ${addedCount} classes.`;
-        } else {
-            pdfStatus.classList.remove('text-indigo-800');
-            pdfStatus.classList.add('text-red-600');
-            pdfStatus.innerText = "❌ Could not auto-parse the schedule from the PDF text. Please use Manual Entry.";
-        }
-    }
+        Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
+        renderPreview(); updateSendButton();
+        alert(`Successfully parsed and added ${addedCount} slots!`);
+    });
+
     // ====== MQTT CONNECTION ======
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
@@ -267,7 +237,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchDevices() {
         if(!deviceList) return;
         deviceList.innerHTML = '<p class="text-gray-500 text-sm">Fetching devices...</p>';
-        
         const defaultDevices = [
             { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
             { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
