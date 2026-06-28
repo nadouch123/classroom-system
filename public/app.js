@@ -5,11 +5,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const MQTT_HOST = "8b3f08bad638441bb7bc39536961734b.s1.eu.hivemq.cloud";
-    const MQTT_PORT = 8884;  // <--- CHANGED TO 8884 FOR WEB BROWSERS
+    const MQTT_PORT = 8884; 
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
 
-    const API_KEY = process.env.GCP_API_KEY;
+    // FIXED: Hardcoded your API key so it works in the browser
+    const GEMINI_API_KEY = "AQ.Ab8RN6LDbAQ05plipR0HOjUFyEveaX9e9pflnRdpV7GarnAS3w"; 
     
     let mqttClient;
     let isConnected = false;
@@ -24,13 +25,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }; 
 
     // ====== UI ELEMENTS ======
+    const loginScreen = document.getElementById('loginScreen');
+    const appScreen = document.getElementById('appScreen');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPassword = document.getElementById('loginPassword');
+    const loginError = document.getElementById('loginError');
+
     const deviceSelect = document.getElementById('deviceSelect');
     const sendScheduleBtn = document.getElementById('sendSchedule');
-    const uploadStatus = document.getElementById('uploadStatus');
     const deviceList = document.getElementById('deviceList');
     const refreshBtn = document.getElementById('refreshDevices');
     
-    const classroomId = document.getElementById('classroomId');
     const validFrom = document.getElementById('validFrom');
     const validTo = document.getElementById('validTo');
     const slotDay = document.getElementById('slotDay');
@@ -48,17 +55,71 @@ document.addEventListener('DOMContentLoaded', () => {
     const parsePdfBtn = document.getElementById('parsePdfBtn');
     const pdfStatus = document.getElementById('pdfStatus');
 
+    // ====== AUTHENTICATION LOGIC ======
+    loginBtn.addEventListener('click', async () => {
+        const email = loginEmail.value;
+        const password = loginPassword.value;
+        
+        if(!email || !password) {
+            loginError.innerText = "Please enter email and password";
+            loginError.classList.remove('hidden');
+            return;
+        }
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: password,
+        });
+
+        if (error) {
+            loginError.innerText = "Error: " + error.message;
+            loginError.classList.remove('hidden');
+        } else {
+            loginError.classList.add('hidden');
+            checkAuth();
+        }
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+        await supabase.auth.signOut();
+        checkAuth();
+    });
+
+    async function checkAuth() {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+            loginScreen.classList.add('hidden');
+            appScreen.classList.remove('hidden');
+            appScreen.classList.add('fade-in');
+            // Initialize app logic only after login
+            initApp(); 
+        } else {
+            loginScreen.classList.remove('hidden');
+            appScreen.classList.add('hidden');
+        }
+    }
+
+    // Run auth check on load
+    checkAuth();
+
+    // ====== APP INITIALIZATION ======
+    function initApp() {
+        connectMQTT();
+        fetchDevices();
+    }
+
     window.setTime = (start, end) => {
         slotStartTime.value = start;
         slotEndTime.value = end;
     };
 
-        // ====== AI PDF EXTRACTION LOGIC ======
+    // ====== AI PDF EXTRACTION LOGIC ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
         
-        pdfStatus.classList.remove('hidden');
+        pdfStatus.classList.remove('hidden', 'text-red-600');
+        pdfStatus.classList.add('text-indigo-800');
         pdfStatus.innerText = "⏳ AI is reading the PDF... Please wait (10-15 seconds).";
         parsePdfBtn.disabled = true;
 
@@ -81,9 +142,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 const data = await response.json();
-                console.log("Google API Response:", data); // Log full response
+                console.log("Google API Response:", data); 
                 
-                // Check if Google returned an error object
                 if (data.error) {
                     throw new Error(data.error.message || "Unknown API Error");
                 }
@@ -106,13 +166,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     renderPreview(); updateSendButton();
                     pdfStatus.innerText = `✅ Success! AI extracted and added ${addedCount} classes.`;
                 } else {
-                    throw new Error("AI returned no candidates. The PDF might be empty or unreadable.");
+                    throw new Error("AI returned no data. The PDF might be empty or unreadable.");
                 }
             } catch (e) {
                 console.error(e);
-                // Show the exact error message on the screen!
-                pdfStatus.innerText = `❌ Error: ${e.message}`;
+                pdfStatus.classList.remove('text-indigo-800');
                 pdfStatus.classList.add('text-red-600');
+                pdfStatus.innerText = `❌ Error: ${e.message}`;
             } finally {
                 parsePdfBtn.disabled = false;
             }
@@ -133,7 +193,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 isConnected = true; 
                 updateStatus("Online", "green"); 
                 mqttClient.subscribe("raspberry/data_response"); 
-                fetchDevices(); 
             },
             onFailure: (err) => { 
                 console.error("MQTT Connection Failed:", err); 
@@ -147,15 +206,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const el = document.getElementById('connectionStatus');
         if(el) {
             el.innerText = text;
-            el.className = `px-2 py-1 rounded text-white text-sm ${color === 'green' ? 'bg-green-500' : color === 'red' ? 'bg-red-500' : 'bg-gray-500'}`;
+            el.className = `px-3 py-1 rounded-full text-xs font-medium text-white ${color === 'green' ? 'bg-green-500' : color === 'red' ? 'bg-red-500' : 'bg-gray-500'}`;
         }
     }
 
     function updateDeviceListUI(devices) {
         deviceList.innerHTML = devices.map(d => `
-            <div class="bg-white p-4 rounded-lg shadow-md border border-gray-200 mb-2">
-                <strong>ID:</strong> ${d.module_id} <br>
-                <small class="text-gray-500">${d.node_name ? `Name: ${d.node_name}` : ''}</small>
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+                <div>
+                    <strong class="text-gray-800 text-sm">${d.module_id}</strong> <br>
+                    <small class="text-gray-500">${d.node_name ? d.node_name : 'Device'}</small>
+                </div>
+                <span class="w-3 h-3 bg-green-500 rounded-full"></span>
             </div>
         `).join('');
         deviceSelect.innerHTML = '<option value="">-- Select Target Devices --</option>' + 
@@ -164,19 +226,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchDevices() {
         if(!deviceList) return;
-        deviceList.innerHTML = '<p class="text-gray-500">Fetching devices...</p>';
+        deviceList.innerHTML = '<p class="text-gray-500 text-sm">Fetching devices...</p>';
         
-        // Fallback: Add default ESP32 manually so you can always send schedules
         const defaultDevices = [
             { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
             { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
         ];
         updateDeviceListUI(defaultDevices);
-
-        // Also try to request from server
-        const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
-        message.destinationName = "raspberry/data_request";
-        if(isConnected) mqttClient.send(message);
     }
 
     function timeToMinutes(timeStr) { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; }
@@ -225,20 +281,21 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshBtn.addEventListener('click', fetchDevices);
 
     function renderPreview() {
-        let html = '<div class="space-y-2">';
+        let html = '<div class="space-y-3">';
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].forEach(day => {
             const slots = scheduleData.schedule[day];
-            html += `<div class="flex justify-between items-center mb-1 border-b border-gray-200 pb-1 mt-2"><strong class="text-blue-900">${day}</strong><span class="text-xs font-bold ${slots.length > 0 ? 'text-blue-600' : 'text-gray-400'}">${slots.length} Slots</span></div>`;
+            html += `<div class="mb-2"><div class="flex justify-between items-center mb-1 border-b border-slate-200 pb-1"><strong class="text-blue-800 text-sm">${day}</strong><span class="text-xs font-medium ${slots.length > 0 ? 'text-blue-600' : 'text-gray-400'}">${slots.length} Slots</span></div>`;
             if (slots.length > 0) {
-                html += `<div class="grid grid-cols-1 gap-1">`;
+                html += `<div class="space-y-1">`;
                 slots.forEach((slot, index) => {
-                    html += `<div class="flex justify-between items-center bg-white p-2 rounded shadow-sm border border-gray-100 text-left group">
-                        <div class="flex-grow"><div class="font-bold text-gray-800 text-sm"><span class="text-blue-600">${slot.start}</span> - <span class="text-red-500">${slot.end}</span> : ${slot.subject}</div><div class="text-xs text-gray-500 mt-1">${slot.professor} | ${slot.section}</div></div>
-                        <button onclick="deleteSlot('${day}', ${index})" class="ml-2 text-gray-300 hover:text-red-500 transition-colors p-1">❌</button>
+                    html += `<div class="flex justify-between items-center bg-white p-2 rounded-md border border-slate-100 text-left">
+                        <div class="flex-grow"><div class="font-semibold text-gray-800 text-sm"><span class="text-blue-600">${slot.start}</span> - <span class="text-red-500">${slot.end}</span> : ${slot.subject}</div><div class="text-xs text-gray-500 mt-1">${slot.professor} | ${slot.section}</div></div>
+                        <button onclick="deleteSlot('${day}', ${index})" class="ml-2 text-gray-300 hover:text-red-500 transition p-1">❌</button>
                     </div>`;
                 });
                 html += `</div>`;
             } else { html += `<p class="text-gray-400 text-xs italic py-1">No slots</p>`; }
+            html += `</div>`;
         });
         html += '</div>';
         previewArea.innerHTML = html;
@@ -286,10 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 mqttClient.send(message);
                 sendCount++;
             }
-            updateStatus(`Sent to ${sendCount} devices!`, 'green');
-        } catch (e) { console.error(e); updateStatus('Error sending', 'red'); } 
+            alert(`Success! Schedule sent to ${sendCount} devices.`);
+        } catch (e) { console.error(e); alert('Error sending schedule.'); } 
     });
-
-    // Init
-    connectMQTT();
 });
