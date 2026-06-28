@@ -9,6 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
+    // METTEZ VOTRE CLÉ GROQ ICI (commence par gsk_)
+    const GROQ_API_KEY = "gsk_VOTRE_CLE_ICI"; 
+    
     let mqttClient;
     let isConnected = false;
     
@@ -51,8 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const pdfUpload = document.getElementById('pdfUpload');
     const parsePdfBtn = document.getElementById('parsePdfBtn');
     const pdfStatus = document.getElementById('pdfStatus');
-    const bulkPasteArea = document.getElementById('bulkPasteArea');
-    const parsePasteBtn = document.getElementById('parsePasteBtn');
 
     // ====== AUTHENTICATION LOGIC ======
     loginBtn.addEventListener('click', async () => {
@@ -108,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-    // ====== PDF.JS LOCAL EXTRACTION ======
+    // ====== PDF EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -119,75 +120,95 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting text from PDF...";
+        pdfStatus.innerText = "⏳ Reading PDF and asking AI to organize it...";
         parsePdfBtn.disabled = true;
 
         try {
+            // 1. Extract raw text from PDF
             const reader = new FileReader();
             reader.readAsArrayBuffer(file);
             reader.onload = async () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
-                let extractedText = "";
+                let rawText = "";
                 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     textContent.items.forEach(item => {
-                        extractedText += item.str + "\t"; // Use tab as separator
+                        rawText += item.str + " ";
                     });
-                    extractedText += "\n";
+                    rawText += "\n";
                 }
 
-                if (extractedText.length > 0) {
-                    bulkPasteArea.value = extractedText.replace(/\n\s*\n/g, '\n').trim();
-                    pdfStatus.innerText = "✅ Text extracted! Scroll down and click 'Parse & Add to Schedule'.";
+                if (rawText.length === 0) {
+                    throw new Error("Could not extract any text from this PDF.");
+                }
+
+                // 2. Send raw text to Groq AI to organize it
+                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a university schedule PDF. 
+                The text is messy because PDF tables lose their columns. 
+                Identify all class sessions. Return ONLY a valid JSON array of objects. 
+                Each object must have exactly these keys: "day" (must be in English: Monday, Tuesday, etc.), "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
+                If a field is missing, use an empty string "". Do not include markdown formatting like \`\`\`json.
+                
+                Raw Text:
+                ${rawText}`;
+
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [{ role: "user", content: prompt }],
+                        temperature: 0.1
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+
+                if (data.choices && data.choices.length > 0) {
+                    let aiText = data.choices[0].message.content;
+                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const parsedClasses = JSON.parse(aiText);
+                    
+                    // 3. Add to schedule
+                    let addedCount = 0;
+                    parsedClasses.forEach(cls => {
+                        let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
+                        if (scheduleData.schedule[day]) {
+                            scheduleData.schedule[day].push({
+                                start: cls.start,
+                                end: cls.end,
+                                subject: cls.subject || "General",
+                                professor: cls.professor || "",
+                                section: cls.section || ""
+                            });
+                            addedCount++;
+                        }
+                    });
+
+                    Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
+                    renderPreview(); updateSendButton();
+                    pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
                 } else {
-                    pdfStatus.classList.remove('text-indigo-800');
-                    pdfStatus.classList.add('text-red-600');
-                    pdfStatus.innerText = "❌ Could not extract text. Is this a scanned image PDF?";
+                    throw new Error("AI returned no data.");
                 }
             };
         } catch (e) {
             console.error(e);
-            pdfStatus.innerText = `❌ Error reading PDF: ${e.message}`;
+            pdfStatus.classList.remove('text-indigo-800');
+            pdfStatus.classList.add('text-red-600');
+            pdfStatus.innerText = `❌ Error: ${e.message}`;
         } finally {
             parsePdfBtn.disabled = false;
-        }
-    });
-
-    // ====== BULK PASTE PARSING LOGIC ======
-    parsePasteBtn.addEventListener('click', () => {
-        const text = bulkPasteArea.value.trim();
-        if (!text) return alert("Please extract or paste data first.");
-        
-        const lines = text.split('\n');
-        let addedCount = 0;
-
-        lines.forEach(line => {
-            // Split by Tab OR multiple spaces
-            const parts = line.split(/\t+|\s{2,}/).map(p => p.trim()).filter(p => p);
-            if (parts.length >= 4) {
-                let day = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
-                if (scheduleData.schedule[day]) {
-                    scheduleData.schedule[day].push({
-                        start: parts[1],
-                        end: parts[2],
-                        subject: parts[3] || "General",
-                        professor: parts[4] || "",
-                        section: parts[5] || ""
-                    });
-                    addedCount++;
-                }
-            }
-        });
-
-        Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-        renderPreview(); updateSendButton();
-        if(addedCount > 0) {
-            alert(`Successfully parsed and added ${addedCount} slots!`);
-        } else {
-            alert("Could not parse any valid lines. Make sure the format is Day Start End Subject.");
         }
     });
 
@@ -248,13 +269,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if(!deviceList) return;
         deviceList.innerHTML = '<p class="text-gray-500 text-sm">Searching for devices...</p>';
         
-        // We do NOT hardcode devices anymore. We only show what the server gives us.
         const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
         message.destinationName = "raspberry/data_request";
         
         if(isConnected) {
             mqttClient.send(message);
-            // If server doesn't respond in 3 seconds, show no devices
             setTimeout(() => {
                 if (deviceList.innerHTML.includes('Searching')) {
                     updateDeviceListUI([]);
