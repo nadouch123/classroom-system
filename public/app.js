@@ -114,71 +114,111 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ====== AI PDF EXTRACTION LOGIC ======
+        // Configure PDF.js worker
+    if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    // ====== LOCAL PDF EXTRACTION LOGIC (NO API NEEDED) ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ AI is reading the PDF... Please wait (10-15 seconds).";
+        pdfStatus.innerText = "⏳ Reading PDF locally...";
         parsePdfBtn.disabled = true;
 
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = async () => {
-            const base64Data = reader.result.split(',')[1];
-            const prompt = `Analyze this university schedule document. Extract all class sessions. 
-            Return ONLY a valid JSON array of objects. 
-            Each object must have exactly these keys: "day" (e.g. Monday), "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
-            If a field is missing, use an empty string "". Do not include markdown formatting like \`\`\`json.`;
-
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [ { text: prompt }, { inline_data: { mime_type: "application/pdf", data: base64Data } } ] }]
-                    })
-                });
-
-                const data = await response.json();
-                console.log("Google API Response:", data); 
+        try {
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(file);
+            reader.onload = async () => {
+                const typedArray = new Uint8Array(reader.result);
                 
-                if (data.error) {
-                    throw new Error(data.error.message || "Unknown API Error");
-                }
-
-                if (data.candidates && data.candidates.length > 0) {
-                    let aiText = data.candidates[0].content.parts[0].text;
-                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const parsedClasses = JSON.parse(aiText);
-                    
-                    let addedCount = 0;
-                    parsedClasses.forEach(cls => {
-                        let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
-                        if (scheduleData.schedule[day]) {
-                            scheduleData.schedule[day].push({ start: cls.start, end: cls.end, subject: cls.subject || "General", professor: cls.professor || "", section: cls.section || "" });
-                            addedCount++;
-                        }
+                // Read PDF using PDF.js
+                const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
+                let extractedText = "";
+                
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    textContent.items.forEach(item => {
+                        extractedText += item.str + " ";
                     });
-
-                    Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-                    renderPreview(); updateSendButton();
-                    pdfStatus.innerText = `✅ Success! AI extracted and added ${addedCount} classes.`;
-                } else {
-                    throw new Error("AI returned no data. The PDF might be empty or unreadable.");
+                    extractedText += "\n";
                 }
-            } catch (e) {
-                console.error(e);
-                pdfStatus.classList.remove('text-indigo-800');
-                pdfStatus.classList.add('text-red-600');
-                pdfStatus.innerText = `❌ Error: ${e.message}`;
-            } finally {
-                parsePdfBtn.disabled = false;
-            }
-        };
+
+                // Clean up text and put it in the Bulk Paste area for the user to review
+                // Replace multiple spaces with tabs or newlines to help the parser
+                extractedText = extractedText.replace(/\s+/g, ' ').trim();
+                
+                if (extractedText.length > 0) {
+                    // We will auto-parse it directly
+                    parseExtractedText(extractedText);
+                } else {
+                    pdfStatus.classList.remove('text-indigo-800');
+                    pdfStatus.classList.add('text-red-600');
+                    pdfStatus.innerText = "❌ Could not extract text. Is this a scanned image PDF?";
+                }
+            };
+        } catch (e) {
+            console.error(e);
+            pdfStatus.classList.remove('text-indigo-800');
+            pdfStatus.classList.add('text-red-600');
+            pdfStatus.innerText = `❌ Error reading PDF: ${e.message}`;
+        } finally {
+            parsePdfBtn.disabled = false;
+        }
     });
 
+    function parseExtractedText(text) {
+        // Try to find patterns like "Monday 08:30 10:00 Math Smith A1"
+        // This is a basic parser. It looks for Day names and times.
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        let addedCount = 0;
+        
+        // Split text into lines or chunks
+        const lines = text.split('\n');
+        
+        lines.forEach(line => {
+            days.forEach(day => {
+                if (line.includes(day)) {
+                    // Find times like 08:30 or 08h30
+                    const timeMatches = line.match(/\b\d{1,2}[:h]\d{2}\b/gi);
+                    if (timeMatches && timeMatches.length >= 2) {
+                        let start = timeMatches[0].replace('h', ':').replace('H', ':');
+                        let end = timeMatches[1].replace('h', ':').replace('H', ':');
+                        
+                        // Try to guess subject (words after the second time)
+                        const parts = line.split(end);
+                        let subject = parts[1] ? parts[1].trim().split(' ').slice(0, 3).join(' ') : "General";
+                        subject = subject.replace(/[^a-zA-Z0-9\s]/g, '').trim();
+
+                        if (scheduleData.schedule[day]) {
+                            scheduleData.schedule[day].push({
+                                start: start,
+                                end: end,
+                                subject: subject || "General",
+                                professor: "",
+                                section: ""
+                            });
+                            addedCount++;
+                        }
+                    }
+                }
+            });
+        });
+
+        if (addedCount > 0) {
+            Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
+            renderPreview(); updateSendButton();
+            pdfStatus.innerText = `✅ Success! Extracted and added ${addedCount} classes.`;
+        } else {
+            pdfStatus.classList.remove('text-indigo-800');
+            pdfStatus.classList.add('text-red-600');
+            pdfStatus.innerText = "❌ Could not auto-parse the schedule from the PDF text. Please use Manual Entry.";
+        }
+    }
     // ====== MQTT CONNECTION ======
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
