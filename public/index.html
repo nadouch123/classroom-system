@@ -82,23 +82,11 @@
                     <h2 class="text-xl font-bold text-gray-800">📅 Schedule Builder</h2>
                     <div class="text-xs text-gray-500">Classroom ID: 111</div>
                 </div>
-                
-                <!-- Settings -->
-                <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Valid From</label>
-                        <input type="date" id="validFrom" value="2023-09-01" class="w-full border border-gray-200 p-2 rounded-lg bg-slate-50 text-sm">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Valid To</label>
-                        <input type="date" id="validTo" value="2024-06-30" class="w-full border border-gray-200 p-2 rounded-lg bg-slate-50 text-sm">
-                    </div>
-                </div>
 
                 <!-- PDF EXTRACTOR -->
                 <div class="bg-gradient-to-r from-purple-50 to-indigo-50 p-4 rounded-xl border border-purple-100 mb-6">
                     <h3 class="font-bold text-indigo-900 flex items-center gap-2 mb-3">📄 PDF Text Extractor</h3>
-                    <small class="text-gray-600 block mb-3">Upload the schedule PDF. The system will extract the text and put it below. Then click "Parse Text".</small>
+                    <small class="text-gray-600 block mb-3">Upload the schedule PDF. The system will extract the raw text. (Note: Complex table layouts may require manual review).</small>
                     <div class="flex items-center gap-4">
                         <input type="file" id="pdfUpload" accept="application/pdf" class="text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer">
                         <button id="parsePdfBtn" class="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 text-sm transition">
@@ -122,6 +110,18 @@
                 <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6">
                     <h3 class="font-bold mb-3 text-blue-900">Manual Entry</h3>
                     
+                    <!-- VALIDITY DATES MOVED HERE -->
+                    <div class="grid grid-cols-2 gap-4 mb-4 bg-white p-3 rounded-lg border border-blue-100">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Valid From</label>
+                            <input type="date" id="validFrom" value="2023-09-01" class="w-full border border-gray-200 p-2 rounded-lg bg-slate-50 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Valid To</label>
+                            <input type="date" id="validTo" value="2024-06-30" class="w-full border border-gray-200 p-2 rounded-lg bg-slate-50 text-sm">
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label class="block text-xs font-medium text-gray-600 mb-2">Quick Time Presets</label>
                         <div class="flex flex-wrap gap-2">

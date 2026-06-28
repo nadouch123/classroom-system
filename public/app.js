@@ -101,7 +101,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // ====== APP INITIALIZATION ======
     function initApp() {
         connectMQTT();
-        fetchDevices();
     }
 
     window.setTime = (start, end) => {
@@ -141,7 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 if (extractedText.length > 0) {
-                    // Put extracted text into the Bulk Paste area for the user to see and parse
                     bulkPasteArea.value = extractedText.replace(/\n\s*\n/g, '\n').trim();
                     pdfStatus.innerText = "✅ Text extracted! Scroll down and click 'Parse & Add to Schedule'.";
                 } else {
@@ -186,7 +184,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
         renderPreview(); updateSendButton();
-        alert(`Successfully parsed and added ${addedCount} slots!`);
+        if(addedCount > 0) {
+            alert(`Successfully parsed and added ${addedCount} slots!`);
+        } else {
+            alert("Could not parse any valid lines. Make sure the format is Day Start End Subject.");
+        }
     });
 
     // ====== MQTT CONNECTION ======
@@ -203,10 +205,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 isConnected = true; 
                 updateStatus("Online", "green"); 
                 mqttClient.subscribe("raspberry/data_response"); 
+                fetchDevices(); 
             },
             onFailure: (err) => { 
                 console.error("MQTT Connection Failed:", err); 
                 updateStatus("Failed", "red"); 
+                fetchDevices(); 
             }
         };
         mqttClient.connect(options);
@@ -221,6 +225,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateDeviceListUI(devices) {
+        if (!devices || devices.length === 0) {
+            deviceList.innerHTML = '<p class="text-gray-500 text-sm">No devices found.</p>';
+            deviceSelect.innerHTML = '<option value="">No devices available</option>';
+            return;
+        }
+
         deviceList.innerHTML = devices.map(d => `
             <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 flex justify-between items-center">
                 <div>
@@ -236,12 +246,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchDevices() {
         if(!deviceList) return;
-        deviceList.innerHTML = '<p class="text-gray-500 text-sm">Fetching devices...</p>';
-        const defaultDevices = [
-            { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
-            { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
-        ];
-        updateDeviceListUI(defaultDevices);
+        deviceList.innerHTML = '<p class="text-gray-500 text-sm">Searching for devices...</p>';
+        
+        // We do NOT hardcode devices anymore. We only show what the server gives us.
+        const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
+        message.destinationName = "raspberry/data_request";
+        
+        if(isConnected) {
+            mqttClient.send(message);
+            // If server doesn't respond in 3 seconds, show no devices
+            setTimeout(() => {
+                if (deviceList.innerHTML.includes('Searching')) {
+                    updateDeviceListUI([]);
+                }
+            }, 3000);
+        } else {
+            updateDeviceListUI([]);
+        }
     }
 
     function timeToMinutes(timeStr) { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; }
