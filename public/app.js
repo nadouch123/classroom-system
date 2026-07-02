@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_PASS = "enitAttendanceSystem123";
     
     // METTEZ VOTRE CLÉ GROQ ICI (commence par gsk_)
-    const GROQ_API_KEY = "gsk_VOTRE_CLE_ICI"; 
+    const GROQ_API_KEY = "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"; 
     
     let mqttClient;
     let isConnected = false;
