@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-        // ====== PDF EXTRACTION + GROQ AI ======
+            // ====== PDF EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
