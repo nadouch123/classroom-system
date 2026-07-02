@@ -9,9 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // METTEZ VOTRE CLÉ GROQ ICI (commence par gsk_)
-    const GROQ_API_KEY = "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"; 
-    
     let mqttClient;
     let isConnected = false;
     
@@ -109,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-            // ====== PDF EXTRACTION + GROQ AI ======
+    // ====== PDF EXTRACTION + PUTER.JS (GEMINI AI) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -142,74 +139,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                // Check if API key is set
-                if (GROQ_API_KEY === "gsk_VOTRE_CLE_ICI" || !GROQ_API_KEY) {
-                    throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
-                }
-
-                // 2. Send to Groq AI
-                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a schedule PDF. 
+                // 2. Send to Puter.js AI (Gemini 1.5 Flash - Free)
+                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a schedule PDF (it may be in French). 
+                Identify all class sessions. 
+                IMPORTANT: Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday).
                 Return ONLY a valid JSON array of objects. 
-                Each object must have exactly these keys: "day" (Monday, Tuesday, etc.), "start" (HH:MM), "end" (HH:MM), "subject", "professor", "section". 
-                Do not include markdown formatting or extra text.
+                Each object must have exactly these keys: "day", "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
+                Do not include markdown formatting like \`\`\`json.
                 
                 Raw Text:
                 ${rawText}`;
 
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${GROQ_API_KEY}`
-                    },
-                    body: JSON.stringify({
-                        model: "llama-3.3-70b-versatile",
-                        messages: [{ role: "user", content: prompt }],
-                        temperature: 0.1
-                    })
+                // Puter.js AI call
+                const response = await puter.ai.chat(prompt, { model: "gemini-1.5-flash" });
+                
+                // Puter returns the text in response.message.content (as an array of parts or a string)
+                let aiText = "";
+                if (typeof response === 'string') {
+                    aiText = response;
+                } else if (response.message?.content) {
+                    aiText = typeof response.message.content === 'string' ? response.message.content : response.message.content.map(p => p.text).join('');
+                } else {
+                    aiText = JSON.stringify(response);
+                }
+
+                // Robust JSON extraction
+                const jsonStart = aiText.indexOf('[');
+                const jsonEnd = aiText.lastIndexOf(']');
+                if (jsonStart === -1 || jsonEnd === -1) {
+                    throw new Error("AI did not return valid JSON. Try again.");
+                }
+                
+                const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
+                const parsedClasses = JSON.parse(jsonString);
+                
+                // 3. Add to schedule
+                let addedCount = 0;
+                parsedClasses.forEach(cls => {
+                    let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
+                    if (scheduleData.schedule[day]) {
+                        scheduleData.schedule[day].push({
+                            start: cls.start,
+                            end: cls.end,
+                            subject: cls.subject || "General",
+                            professor: cls.professor || "",
+                            section: cls.section || ""
+                        });
+                        addedCount++;
+                    }
                 });
 
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.error?.message || `API Error: ${response.status}`);
-                }
-
-                const data = await response.json();
+                Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
+                renderPreview(); updateSendButton();
+                pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
                 
-                if (data.choices && data.choices.length > 0) {
-                    let aiText = data.choices[0].message.content;
-                    
-                    // Robust JSON extraction (in case AI adds extra text)
-                    const jsonStart = aiText.indexOf('[');
-                    const jsonEnd = aiText.lastIndexOf(']');
-                    if (jsonStart === -1 || jsonEnd === -1) {
-                        throw new Error("AI did not return valid JSON.");
-                    }
-                    const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
-                    const parsedClasses = JSON.parse(jsonString);
-                    
-                    // 3. Add to schedule
-                    let addedCount = 0;
-                    parsedClasses.forEach(cls => {
-                        let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
-                        if (scheduleData.schedule[day]) {
-                            scheduleData.schedule[day].push({
-                                start: cls.start,
-                                end: cls.end,
-                                subject: cls.subject || "General",
-                                professor: cls.professor || "",
-                                section: cls.section || ""
-                            });
-                            addedCount++;
-                        }
-                    });
-
-                    Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-                    renderPreview(); updateSendButton();
-                    pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
-                } else {
-                    throw new Error("AI returned no data.");
-                }
             } catch (e) {
                 console.error("AI Extraction Error:", e);
                 pdfStatus.classList.remove('text-indigo-800');
@@ -220,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
     });
+
     // ====== MQTT CONNECTION ======
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
