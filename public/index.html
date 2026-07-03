@@ -7,8 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-    <!-- BIBLIOTHÈQUE POUR LIRE LES PDF -->
-    <script src="https://js.puter.com/v2/"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -19,7 +17,6 @@
     <div id="loginScreen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-blue-900">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
             <div class="text-center mb-8">
-                <!-- LOGO ENIT ICI -->
                 <img src="enit.png" alt="ENIT Logo" class="h-20 mx-auto mb-4 object-contain">
                 <h1 class="text-3xl font-bold text-blue-800">ENIT Admin Portal</h1>
                 <p class="text-gray-500 mt-2">Smart Classroom System</p>
@@ -45,11 +42,10 @@
     <div id="appScreen" class="hidden container mx-auto p-6 max-w-7xl">
         <header class="flex justify-between items-center mb-8 bg-white p-4 rounded-xl shadow-md">
             <div class="flex items-center gap-3">
-                <!-- LOGO ENIT ICI -->
                 <img src="enit.png" alt="ENIT Logo" class="h-10 w-10 object-contain">
                 <div>
                     <h1 class="text-xl font-bold text-gray-800">ENIT Schedule Manager</h1>
-                    <p class="text-xs text-gray-500">Administration Panel</p>
+                    <p class="text-xs text-gray-500">Classroom 111 Administration</p>
                 </div>
             </div>
             <div class="flex items-center gap-4">
@@ -86,32 +82,22 @@
 
                 <!-- PDF EXTRACTOR -->
                 <div class="bg-gradient-to-r from-purple-50 to-indigo-50 p-4 rounded-xl border border-purple-100 mb-6">
-                    <h3 class="font-bold text-indigo-900 flex items-center gap-2 mb-3">📄 PDF Text Extractor</h3>
-                    <small class="text-gray-600 block mb-3">Upload the schedule PDF. The system will extract the raw text. (Note: Complex table layouts may require manual review).</small>
+                    <h3 class="font-bold text-indigo-900 flex items-center gap-2 mb-3">📄 PDF AI Extractor</h3>
+                    <small class="text-gray-600 block mb-3">Upload the schedule PDF. The AI will read it, extract the dates, and build the schedule automatically.</small>
                     <div class="flex items-center gap-4">
                         <input type="file" id="pdfUpload" accept="application/pdf" class="text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer">
                         <button id="parsePdfBtn" class="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 text-sm transition">
-                            Extract Text
+                            Extract with AI
                         </button>
                     </div>
                     <div id="pdfStatus" class="text-sm text-indigo-800 font-medium mt-3 hidden"></div>
                 </div>
 
-                <!-- BULK PASTE AREA -->
-                <div class="bg-green-50 p-4 rounded-xl border border-green-200 mb-6">
-                    <h3 class="font-bold mb-2 text-green-900">📋 Extracted Text / Bulk Paste</h3>
-                    <small class="text-gray-600 block mb-2">Format: Day | Start | End | Subject | Professor | Section</small>
-                    <textarea id="bulkPasteArea" class="w-full border p-2 rounded-lg h-24 font-mono text-xs bg-white" placeholder="Monday  08:30  10:00  Math  Smith  A1"></textarea>
-                    <button id="parsePasteBtn" class="mt-2 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 text-sm transition">
-                        Parse & Add to Schedule
-                    </button>
-                </div>
-
                 <!-- Manual Entry -->
                 <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6">
-                    <h3 class="font-bold mb-3 text-blue-900">Manual Entry</h3>
+                    <h3 class="font-bold mb-3 text-blue-900">Manual Entry / Edit Dates</h3>
                     
-                    <!-- VALIDITY DATES MOVED HERE -->
+                    <!-- VALIDITY DATES -->
                     <div class="grid grid-cols-2 gap-4 mb-4 bg-white p-3 rounded-lg border border-blue-100">
                         <div>
                             <label class="block text-xs font-medium text-gray-600 mb-1">Valid From</label>

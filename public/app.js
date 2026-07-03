@@ -147,13 +147,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
                 }
 
-                // 2. Send to Groq AI
-                const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a schedule PDF (it may be in French). 
-                Identify all class sessions. 
-                IMPORTANT: Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday).
-                Return ONLY a valid JSON array of objects. 
-                Each object must have exactly these keys: "day" (in English), "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
-                Do not include markdown formatting like \`\`\`json or extra text.
+                // 2. Send to Groq AI with highly structured prompt
+                const prompt = `You are an expert university schedule parser. 
+                Analyze the following raw text extracted from a schedule PDF. The text is in French.
+                
+                Your task is to extract the validity dates and all class sessions.
+                
+                IMPORTANT INSTRUCTIONS:
+                1. The raw text comes from a PDF table, so columns are merged into a single line. You must intelligently deduce which subject belongs to which day and time based on context.
+                2. Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday).
+                3. Extract the "Valable du" (Valid From) and "au" (Valid To) dates. Convert them to YYYY-MM-DD format.
+                
+                Return ONLY a valid JSON object with the following structure:
+                {
+                  "validity": { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" },
+                  "schedule": [
+                    { "day": "Monday", "start": "HH:MM", "end": "HH:MM", "subject": "...", "professor": "...", "section": "..." }
+                  ]
+                }
+                Do not include markdown formatting like \`\`\`json or any other text.
                 
                 Raw Text:
                 ${rawText}`;
@@ -181,18 +193,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.choices && data.choices.length > 0) {
                     let aiText = data.choices[0].message.content;
                     
-                    // Robust JSON extraction (in case AI adds extra text)
-                    const jsonStart = aiText.indexOf('[');
-                    const jsonEnd = aiText.lastIndexOf(']');
+                    // Robust JSON extraction
+                    const jsonStart = aiText.indexOf('{');
+                    const jsonEnd = aiText.lastIndexOf('}');
                     if (jsonStart === -1 || jsonEnd === -1) {
-                        throw new Error("AI did not return valid JSON. Try again.");
+                        throw new Error("AI did not return valid JSON.");
                     }
                     const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
-                    const parsedClasses = JSON.parse(jsonString);
+                    const aiResult = JSON.parse(jsonString);
                     
-                    // 3. Add to schedule
+                    // 3. Apply validity dates
+                    if (aiResult.validity) {
+                        if (aiResult.validity.from) validFrom.value = aiResult.validity.from;
+                        if (aiResult.validity.to) validTo.value = aiResult.validity.to;
+                    }
+
+                    // 4. Add to schedule
                     let addedCount = 0;
-                    parsedClasses.forEach(cls => {
+                    aiResult.schedule.forEach(cls => {
                         let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
                         if (scheduleData.schedule[day]) {
                             scheduleData.schedule[day].push({
@@ -258,8 +276,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateDeviceListUI(devices) {
         if (!devices || devices.length === 0) {
-            deviceList.innerHTML = '<p class="text-gray-500 text-sm">No devices found.</p>';
-            deviceSelect.innerHTML = '<option value="">No devices available</option>';
+            // Fallback if server is offline
+            const fallbackDevices = [
+                { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
+                { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
+            ];
+            deviceList.innerHTML = fallbackDevices.map(d => `
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+                    <div>
+                        <strong class="text-gray-800 text-sm">${d.module_id}</strong> <br>
+                        <small class="text-gray-500">${d.node_name}</small>
+                    </div>
+                    <span class="w-3 h-3 bg-yellow-500 rounded-full" title="Fallback"></span>
+                </div>
+            `).join('');
+            deviceSelect.innerHTML = '<option value="">-- Select Target Devices --</option>' + 
+                fallbackDevices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name}</option>`).join('');
             return;
         }
 
@@ -314,20 +346,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const startMin = timeToMinutes(startTime), endMin = timeToMinutes(endTime);
         if (startMin >= endMin) { slotError.innerText = "End time must be after Start time."; slotError.classList.remove('hidden'); return; }
 
-        const duration = endMin - startMin;
-        if (duration !== 60 && duration !== 90 && duration !== 180) {
-            slotError.innerText = `Duration must be 1h, 1.5h, or 3h. (Current: ${duration} mins)`;
-            slotError.classList.remove('hidden'); return;
-        }
-
-        let hasConflict = false;
-        scheduleData.schedule[day].forEach(slot => {
-            if (isOverlapping(startMin, endMin, timeToMinutes(slot.start), timeToMinutes(slot.end))) {
-                hasConflict = true; slotError.innerText = `Conflict with ${slot.start} - ${slot.end}`; slotError.classList.remove('hidden');
-            }
-        });
-        if (hasConflict) return alert("Cannot add class. Time conflict.");
-
         scheduleData.schedule[day].push({ start: startTime, end: endTime, subject, professor, section });
         scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
         renderPreview(); updateSendButton();
@@ -374,7 +392,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (selectedOptions.length === 0) return alert("Select at least one device");
         if (total === 0) return alert("No schedule data to send");
-        if (!isConnected) return alert("MQTT offline");
+
+        scheduleData.validity.from = validFrom.value;
+        scheduleData.validity.to = validTo.value;
 
         try {
             await supabase.from('schedules').upsert({ classroom_id: scheduleData.classroom, validity: scheduleData.validity, schedule_data: scheduleData.schedule });
