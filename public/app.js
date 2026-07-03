@@ -109,6 +109,18 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
+    // ====== HELPER: CONVERT DATE FORMAT (DD/MM/YYYY -> YYYY-MM-DD) ======
+    function convertDateFormat(dateStr) {
+        if (!dateStr) return null;
+        // Check if it matches DD/MM/YYYY
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+        // If already YYYY-MM-DD or another format, return as is
+        return dateStr;
+    }
+
     // ====== PDF EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -151,12 +163,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const prompt = `You are an expert university schedule parser. 
                 Analyze the following raw text extracted from a schedule PDF. The text is in French.
                 
-                Your task is to extract the validity dates and all class sessions.
+                The text was extracted by reading the PDF columns from top to bottom, left to right.
+                The days of the week are listed at the top: Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi (6 days total).
+                The classes are listed sequentially in the text. 
+                Your job is to assign each class to the correct day by deducing the logical breaks between days.
                 
                 IMPORTANT INSTRUCTIONS:
-                1. The raw text comes from a PDF table, so columns are merged into a single line. You must intelligently deduce which subject belongs to which day and time based on context.
-                2. Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday).
-                3. Extract the "Valable du" (Valid From) and "au" (Valid To) dates. Convert them to YYYY-MM-DD format.
+                1. Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday).
+                2. Extract the "Valable du" (Valid From) and "au" (Valid To) dates.
+                3. If a date is in DD/MM/YYYY format, convert it to YYYY-MM-DD.
+                4. Do not invent classes. Only use the ones provided in the text.
                 
                 Return ONLY a valid JSON object with the following structure:
                 {
@@ -202,10 +218,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
                     const aiResult = JSON.parse(jsonString);
                     
-                    // 3. Apply validity dates
+                    // 3. Apply validity dates (with format conversion)
                     if (aiResult.validity) {
-                        if (aiResult.validity.from) validFrom.value = aiResult.validity.from;
-                        if (aiResult.validity.to) validTo.value = aiResult.validity.to;
+                        if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
+                        if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                     }
 
                     // 4. Add to schedule
