@@ -111,6 +111,14 @@ document.addEventListener('DOMContentLoaded', () => {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
 
+    // Helper: Timeout function to prevent infinite loading
+    function withTimeout(promise, ms) {
+        const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("AI request timed out. Please ensure no popup was blocked.")), ms)
+        );
+        return Promise.race([promise, timeout]);
+    }
+
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
@@ -139,26 +147,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                // 2. Send to Puter.js AI (Gemini 1.5 Flash - Free)
+                // 2. Send to Puter.js AI (Gemini 2.0 Flash - Free)
                 const prompt = `You are a university schedule parser. Analyze the following raw text extracted from a schedule PDF (it may be in French). 
                 Identify all class sessions. 
                 IMPORTANT: Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday).
                 Return ONLY a valid JSON array of objects. 
-                Each object must have exactly these keys: "day", "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
-                Do not include markdown formatting like \`\`\`json.
+                Each object must have exactly these keys: "day" (in English), "start" (HH:MM 24h format), "end" (HH:MM 24h format), "subject", "professor", "section". 
+                Do not include markdown formatting like \`\`\`json or extra text.
                 
                 Raw Text:
                 ${rawText}`;
 
-                // Puter.js AI call
-                const response = await puter.ai.chat(prompt, { model: "gemini-1.5-flash" });
+                // Puter.js AI call with a 45-second timeout
+                const response = await withTimeout(
+                    puter.ai.chat(prompt, { model: "gemini-2.0-flash" }),
+                    45000
+                );
                 
-                // Puter returns the text in response.message.content (as an array of parts or a string)
+                // Parse Puter response (can be string or object)
                 let aiText = "";
                 if (typeof response === 'string') {
                     aiText = response;
-                } else if (response.message?.content) {
+                } else if (response?.message?.content) {
                     aiText = typeof response.message.content === 'string' ? response.message.content : response.message.content.map(p => p.text).join('');
+                } else if (response?.text) {
+                    aiText = response.text;
                 } else {
                     aiText = JSON.stringify(response);
                 }
