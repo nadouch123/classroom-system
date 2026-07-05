@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF EXTRACTION + GROQ AI (WITH 2D TABLE RECONSTRUCTION) ======
+    // ====== PDF EXTRACTION + GROQ AI (SIMPLE TEXT) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reconstructing PDF table...";
+        pdfStatus.innerText = "⏳ Reading PDF...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -138,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         reader.onload = async () => {
             try {
-                // 1. Extract raw text WITH 2D TABLE RECONSTRUCTION
+                // 1. Extract raw text SIMPLY (no 2D reconstruction)
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 let rawText = "";
@@ -146,25 +146,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    let rows = {};
-                    
-                    // Group items by their Y coordinate (transform[5]) to form rows
-                    textContent.items.forEach(item => {
-                        if (!item.str.trim()) return;
-                        let y = Math.round(item.transform[5] / 5) * 5; // Round to nearest 5 to group items in the same visual row
-                        if (!rows[y]) rows[y] = [];
-                        rows[y].push(item);
-                    });
-
-                    // Sort rows from top to bottom (Y descending)
-                    let sortedYs = Object.keys(rows).map(Number).sort((a, b) => b - a);
-                    
-                    sortedYs.forEach(y => {
-                        // Sort items in the same row by their X coordinate (transform[4]) (left to right)
-                        rows[y].sort((a, b) => a.transform[4] - b.transform[4]);
-                        let rowStr = rows[y].map(item => item.str).join("\t"); // Use Tab to separate columns
-                        rawText += rowStr + "\n";
-                    });
+                    textContent.items.forEach(item => { rawText += item.str + " "; });
+                    rawText += "\n";
                 }
 
                 if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
@@ -174,22 +157,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
                 }
 
-                pdfStatus.innerText = "⏳ AI is analyzing the reconstructed table...";
+                pdfStatus.innerText = "⏳ AI is analyzing the schedule...";
 
-                // 2. Send to Groq AI with strict JSON mode
-                const prompt = `Analyze the following tab-separated table extracted from a schedule PDF. The text is in French.
+                // 2. Send to Groq AI with STRICT rules
+                const prompt = `You are an expert university schedule parser. Analyze the following raw text from a schedule PDF in French.
                 
-                The table structure has been reconstructed. The first rows contain the days of the week (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) as column headers.
-                The first column usually contains times.
-                Your task is to extract all class sessions and assign them to the correct day based on their column position in the table.
+                STRICT RULES:
+                1. The text contains a timeline header (08:00, 09:00, 10:00...). DO NOT create classes from this timeline. 
+                2. A real class has a specific start and end time (e.g., 08:30 to 10:00), a subject, a professor, and a section.
+                3. There are approximately 16 real classes in this text. Do not invent or duplicate classes.
+                4. Extract "Valable du" (from) and "au" (to) dates. Convert DD/MM/YYYY to YYYY-MM-DD.
+                5. Translate days to English (Monday, Tuesday, etc.).
                 
-                IMPORTANT INSTRUCTIONS:
-                1. Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday).
-                2. Extract the "Valable du" (Valid From) and "au" (Valid To) dates.
-                3. If a date is in DD/MM/YYYY format, convert it to YYYY-MM-DD.
-                4. Do not invent classes. Only use the ones provided in the table.
-                
-                Return a valid JSON object with the following structure:
+                Return a valid JSON object:
                 {
                   "validity": { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" },
                   "schedule": [
@@ -197,7 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }
                 
-                Reconstructed Table:
+                Raw Text:
                 ${rawText}`;
 
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -209,12 +189,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({
                         model: "llama-3.3-70b-versatile",
                         messages: [
-                            { role: "system", content: "You are a JSON API. Respond ONLY with a valid JSON object. No markdown, no explanations, no text before or after the JSON." },
+                            { role: "system", content: "You are a JSON API. Respond ONLY with a valid JSON object. No markdown, no explanations." },
                             { role: "user", content: prompt }
                         ],
                         temperature: 0.1,
-                        response_format: { type: "json_object" }, // FORCES STRICT JSON
-                        max_tokens: 4096
+                        response_format: { type: "json_object" }
                     })
                 });
 
@@ -227,8 +206,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (data.choices && data.choices.length > 0) {
                     let aiText = data.choices[0].message.content;
-                    
-                    // Because of response_format, aiText is guaranteed to be valid JSON
                     const aiResult = JSON.parse(aiText);
                     
                     // 3. Apply validity dates
@@ -305,7 +282,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateDeviceListUI(devices) {
         if (!devices || devices.length === 0) {
-            // Fallback if server is offline
             const fallbackDevices = [
                 { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
                 { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
