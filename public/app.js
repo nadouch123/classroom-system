@@ -112,16 +112,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // ====== HELPER: CONVERT DATE FORMAT (DD/MM/YYYY -> YYYY-MM-DD) ======
     function convertDateFormat(dateStr) {
         if (!dateStr) return null;
-        // Check if it matches DD/MM/YYYY
         const parts = dateStr.split('/');
         if (parts.length === 3) {
             return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
         }
-        // If already YYYY-MM-DD or another format, return as is
         return dateStr;
     }
 
-    // ====== PDF EXTRACTION + GROQ AI ======
+    // ====== PDF EXTRACTION + GROQ AI (WITH 2D TABLE RECONSTRUCTION) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -132,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reading PDF and asking AI to organize it...";
+        pdfStatus.innerText = "⏳ Reconstructing PDF table...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -140,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         reader.onload = async () => {
             try {
-                // 1. Extract raw text
+                // 1. Extract raw text WITH 2D TABLE RECONSTRUCTION
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 let rawText = "";
@@ -148,8 +146,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    textContent.items.forEach(item => { rawText += item.str + " "; });
-                    rawText += "\n";
+                    let rows = {};
+                    
+                    // Group items by their Y coordinate (transform[5]) to form rows
+                    textContent.items.forEach(item => {
+                        if (!item.str.trim()) return;
+                        let y = Math.round(item.transform[5] / 5) * 5; // Round to nearest 5 to group items in the same visual row
+                        if (!rows[y]) rows[y] = [];
+                        rows[y].push(item);
+                    });
+
+                    // Sort rows from top to bottom (Y descending)
+                    let sortedYs = Object.keys(rows).map(Number).sort((a, b) => b - a);
+                    
+                    sortedYs.forEach(y => {
+                        // Sort items in the same row by their X coordinate (transform[4]) (left to right)
+                        rows[y].sort((a, b) => a.transform[4] - b.transform[4]);
+                        let rowStr = rows[y].map(item => item.str).join("\t"); // Use Tab to separate columns
+                        rawText += rowStr + "\n";
+                    });
                 }
 
                 if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
@@ -159,20 +174,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
                 }
 
-                // 2. Send to Groq AI with highly structured prompt
+                pdfStatus.innerText = "⏳ AI is analyzing the reconstructed table...";
+
+                // 2. Send to Groq AI
                 const prompt = `You are an expert university schedule parser. 
-                Analyze the following raw text extracted from a schedule PDF. The text is in French.
+                Analyze the following tab-separated table extracted from a schedule PDF. The text is in French.
                 
-                The text was extracted by reading the PDF columns from top to bottom, left to right.
-                The days of the week are listed at the top: Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi (6 days total).
-                The classes are listed sequentially in the text. 
-                Your job is to assign each class to the correct day by deducing the logical breaks between days.
+                The table structure has been reconstructed. The first rows contain the days of the week (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) as column headers.
+                The first column usually contains times.
+                Your task is to extract all class sessions and assign them to the correct day based on their column position in the table.
                 
                 IMPORTANT INSTRUCTIONS:
                 1. Translate the days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday).
                 2. Extract the "Valable du" (Valid From) and "au" (Valid To) dates.
                 3. If a date is in DD/MM/YYYY format, convert it to YYYY-MM-DD.
-                4. Do not invent classes. Only use the ones provided in the text.
+                4. Do not invent classes. Only use the ones provided in the table.
                 
                 Return ONLY a valid JSON object with the following structure:
                 {
@@ -183,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 Do not include markdown formatting like \`\`\`json or any other text.
                 
-                Raw Text:
+                Reconstructed Table:
                 ${rawText}`;
 
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -218,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
                     const aiResult = JSON.parse(jsonString);
                     
-                    // 3. Apply validity dates (with format conversion)
+                    // 3. Apply validity dates
                     if (aiResult.validity) {
                         if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                         if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
@@ -344,7 +360,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function timeToMinutes(timeStr) { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; }
-    function isOverlapping(sA, eA, sB, eB) { return (sA < eB) && (eA > sB); }
 
     window.deleteSlot = (day, index) => {
         scheduleData.schedule[day].splice(index, 1);
