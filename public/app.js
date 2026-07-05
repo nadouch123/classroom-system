@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF EXTRACTION + GROQ AI (SIMPLE TEXT) ======
+    // ====== PDF EXTRACTION WITH COLUMN CLUSTERING ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reading PDF...";
+        pdfStatus.innerText = "⏳ Reconstructing PDF columns...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -138,36 +138,112 @@ document.addEventListener('DOMContentLoaded', () => {
         
         reader.onload = async () => {
             try {
-                // 1. Extract raw text SIMPLY (no 2D reconstruction)
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
-                let rawText = "";
                 
+                let dayTexts = { "Monday": "", "Tuesday": "", "Wednesday": "", "Thursday": "", "Friday": "", "Saturday": "" };
+                let metadataText = "";
+
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    textContent.items.forEach(item => { rawText += item.str + " "; });
-                    rawText += "\n";
+                    
+                    // 1. Find X coordinates of day headers to define column boundaries
+                    const dayHeaders = { "Lundi": 0, "Mardi": 0, "Mercredi": 0, "Jeudi": 0, "Vendredi": 0, "Samedi": 0 };
+                    textContent.items.forEach(item => {
+                        let str = item.str.trim();
+                        for (let frDay in dayHeaders) {
+                            if (str.includes(frDay) && dayHeaders[frDay] === 0) {
+                                dayHeaders[frDay] = item.transform[4]; // X coordinate
+                            }
+                        }
+                    });
+
+                    const dayXs = Object.values(dayHeaders).filter(x => x > 0).sort((a,b) => a-b);
+                    const minX = dayXs.length > 0 ? dayXs[0] : 0;
+
+                    let dayBuckets = { "Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": [], "Saturday": [] };
+                    const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
+
+                    textContent.items.forEach(item => {
+                        if (!item.str.trim()) return;
+                        let x = item.transform[4];
+                        let y = item.transform[5];
+                        
+                        // If X is far left, it's metadata or timeline (ignore for days)
+                        if (x < minX - 20) {
+                            metadataText += item.str + " ";
+                            return;
+                        }
+
+                        // Find closest day column
+                        let closestDay = null;
+                        let minDist = Infinity;
+                        for (let frDay in dayHeaders) {
+                            if (dayHeaders[frDay] > 0) {
+                                let dist = Math.abs(x - dayHeaders[frDay]);
+                                if (dist < minDist) {
+                                    minDist = dist;
+                                    closestDay = frDay;
+                                }
+                            }
+                        }
+                        
+                        if (closestDay) {
+                            let enDay = dayMap[closestDay];
+                            dayBuckets[enDay].push({ x: x, y: y, str: item.str });
+                        }
+                    });
+
+                    // Sort items in each day by Y (top to bottom) then X (left to right) and join
+                    for (let enDay in dayBuckets) {
+                        dayBuckets[enDay].sort((a, b) => {
+                            if (Math.abs(a.y - b.y) > 5) return b.y - a.y; 
+                            return a.x - b.x; 
+                        });
+                        let dayStr = dayBuckets[enDay].map(item => item.str).join(" ");
+                        dayTexts[enDay] += dayStr + "\n";
+                    }
                 }
 
-                if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
+                if (Object.values(dayTexts).join("").length === 0) throw new Error("Could not extract any text from this PDF.");
 
                 // Check if API key is set
                 if (GROQ_API_KEY === "gsk_VOTRE_CLE_ICI" || !GROQ_API_KEY || GROQ_API_KEY.length < 20) {
                     throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
                 }
 
-                pdfStatus.innerText = "⏳ AI is analyzing the schedule...";
+                pdfStatus.innerText = "⏳ AI is analyzing the separated columns...";
 
-                // 2. Send to Groq AI with STRICT rules
-                const prompt = `You are an expert university schedule parser. Analyze the following raw text from a schedule PDF in French.
+                // 2. Send to Groq AI
+                const prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using column coordinates.
                 
-                STRICT RULES:
-                1. The text contains a timeline header (08:00, 09:00, 10:00...). DO NOT create classes from this timeline. 
-                2. A real class has a specific start and end time (e.g., 08:30 to 10:00), a subject, a professor, and a section.
-                3. There are approximately 16 real classes in this text. Do not invent or duplicate classes.
-                4. Extract "Valable du" (from) and "au" (to) dates. Convert DD/MM/YYYY to YYYY-MM-DD.
-                5. Translate days to English (Monday, Tuesday, etc.).
+                Here is the raw text for each day:
+                
+                Metadata:
+                ${metadataText}
+                
+                Monday:
+                ${dayTexts.Monday}
+                
+                Tuesday:
+                ${dayTexts.Tuesday}
+                
+                Wednesday:
+                ${dayTexts.Wednesday}
+                
+                Thursday:
+                ${dayTexts.Thursday}
+                
+                Friday:
+                ${dayTexts.Friday}
+                
+                Saturday:
+                ${dayTexts.Saturday}
+                
+                Extract the validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                For each day, extract the class sessions. A class has a start time (HH:MM), end time (HH:MM), subject, professor, and section.
+                Do not include the timeline header (08:00, 09:00, etc.) as classes.
                 
                 Return a valid JSON object:
                 {
@@ -175,10 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   "schedule": [
                     { "day": "Monday", "start": "HH:MM", "end": "HH:MM", "subject": "...", "professor": "...", "section": "..." }
                   ]
-                }
-                
-                Raw Text:
-                ${rawText}`;
+                }`;
 
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
