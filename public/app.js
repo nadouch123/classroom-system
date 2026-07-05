@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF EXTRACTION WITH COLUMN CLUSTERING ======
+    // ====== PDF EXTRACTION WITH STRICT BOUNDARY CLUSTERING ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -148,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    // 1. Find X coordinates of day headers to define column boundaries
+                    // 1. Find X coordinates of day headers
                     const dayHeaders = { "Lundi": 0, "Mardi": 0, "Mercredi": 0, "Jeudi": 0, "Vendredi": 0, "Samedi": 0 };
                     textContent.items.forEach(item => {
                         let str = item.str.trim();
@@ -159,49 +159,67 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
 
-                    const dayXs = Object.values(dayHeaders).filter(x => x > 0).sort((a,b) => a-b);
-                    const minX = dayXs.length > 0 ? dayXs[0] : 0;
+                    let foundDays = [];
+                    for (let frDay in dayHeaders) {
+                        if (dayHeaders[frDay] > 0) foundDays.push({ frDay: frDay, x: dayHeaders[frDay] });
+                    }
+                    foundDays.sort((a, b) => a.x - b.x); // Sort left to right
+                    
+                    const minX = foundDays.length > 0 ? foundDays[0].x : 0;
 
-                    let dayBuckets = { "Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": [], "Saturday": [] };
-                    const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
+                    // 2. Calculate strict midpoints (boundaries) between columns
+                    let boundaries = [];
+                    for (let i = 0; i < foundDays.length - 1; i++) {
+                        boundaries.push((foundDays[i].x + foundDays[i+1].x) / 2);
+                    }
+
+                    let dayBuckets = {};
+                    foundDays.forEach(d => {
+                        let enDay = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" }[d.frDay];
+                        dayBuckets[enDay] = [];
+                    });
 
                     textContent.items.forEach(item => {
                         if (!item.str.trim()) return;
                         let x = item.transform[4];
                         let y = item.transform[5];
                         
-                        // If X is far left, it's metadata or timeline (ignore for days)
-                        if (x < minX - 20) {
+                        // If X is left of the first day, it's metadata/timeline
+                        if (x < minX - 10) {
                             metadataText += item.str + " ";
                             return;
                         }
 
-                        // Find closest day column
-                        let closestDay = null;
-                        let minDist = Infinity;
-                        for (let frDay in dayHeaders) {
-                            if (dayHeaders[frDay] > 0) {
-                                let dist = Math.abs(x - dayHeaders[frDay]);
-                                if (dist < minDist) {
-                                    minDist = dist;
-                                    closestDay = frDay;
-                                }
-                            }
+                        // Find exact column index based on boundaries
+                        let colIndex = 0;
+                        for (let i = 0; i < boundaries.length; i++) {
+                            if (x > boundaries[i]) colIndex = i + 1;
+                            else break;
                         }
                         
-                        if (closestDay) {
-                            let enDay = dayMap[closestDay];
-                            dayBuckets[enDay].push({ x: x, y: y, str: item.str });
-                        }
+                        let enDay = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" }[foundDays[colIndex].frDay];
+                        dayBuckets[enDay].push({ x: x, y: y, str: item.str });
                     });
 
-                    // Sort items in each day by Y (top to bottom) then X (left to right) and join
+                    // Sort items in each day by Y (top to bottom) then X (left to right)
                     for (let enDay in dayBuckets) {
                         dayBuckets[enDay].sort((a, b) => {
                             if (Math.abs(a.y - b.y) > 5) return b.y - a.y; 
                             return a.x - b.x; 
                         });
-                        let dayStr = dayBuckets[enDay].map(item => item.str).join(" ");
+                        
+                        // Reconstruct lines
+                        let dayStr = "";
+                        let prevY = null;
+                        dayBuckets[enDay].forEach(item => {
+                            if (prevY !== null && Math.abs(item.y - prevY) > 5) {
+                                dayStr += "\n";
+                            } else if (dayStr.length > 0) {
+                                dayStr += " ";
+                            }
+                            dayStr += item.str;
+                            prevY = item.y;
+                        });
                         dayTexts[enDay] += dayStr + "\n";
                     }
                 }
@@ -215,8 +233,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 pdfStatus.innerText = "⏳ AI is analyzing the separated columns...";
 
-                // 2. Send to Groq AI
-                const prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using column coordinates.
+                // 3. Send to Groq AI
+                const prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using strict column coordinates.
                 
                 Here is the raw text for each day:
                 
@@ -241,9 +259,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 Saturday:
                 ${dayTexts.Saturday}
                 
-                Extract the validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                For each day, extract the class sessions. A class has a start time (HH:MM), end time (HH:MM), subject, professor, and section.
-                Do not include the timeline header (08:00, 09:00, etc.) as classes.
+                RULES:
+                1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                2. For each day, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
+                3. IMPORTANT: Some words are split across lines in the PDF (e.g., "program" and "mation"). You MUST merge them back into the correct word ("programmation").
+                4. Do not include the timeline header (08:00, 09:00, etc.) as classes.
                 
                 Return a valid JSON object:
                 {
@@ -281,13 +301,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     let aiText = data.choices[0].message.content;
                     const aiResult = JSON.parse(aiText);
                     
-                    // 3. Apply validity dates
+                    // 4. Apply validity dates
                     if (aiResult.validity) {
                         if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                         if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                     }
 
-                    // 4. Add to schedule
+                    // 5. Add to schedule
                     let addedCount = 0;
                     aiResult.schedule.forEach(cls => {
                         let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
