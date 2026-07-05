@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // METTEZ VOTRE CLÉ GROQ ICI (commence par gsk_)
+    // VOTRE CLÉ GROQ
     const GROQ_API_KEY = "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"; 
     
     let mqttClient;
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         slotEndTime.value = end;
     };
 
-    // ====== HELPER: CONVERT DATE FORMAT (DD/MM/YYYY -> YYYY-MM-DD) ======
+    // ====== HELPER: CONVERT DATE FORMAT ======
     function convertDateFormat(dateStr) {
         if (!dateStr) return null;
         const parts = dateStr.split('/');
@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF EXTRACTION WITH STRICT BOUNDARY CLUSTERING ======
+    // ====== PDF EXTRACTION WITH NEAREST NEIGHBOR CLUSTERING ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -144,71 +144,66 @@ document.addEventListener('DOMContentLoaded', () => {
                 let dayTexts = { "Monday": "", "Tuesday": "", "Wednesday": "", "Thursday": "", "Friday": "", "Saturday": "" };
                 let metadataText = "";
 
+                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
+
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
                     // 1. Find X coordinates of day headers
-                    const dayHeaders = { "Lundi": 0, "Mardi": 0, "Mercredi": 0, "Jeudi": 0, "Vendredi": 0, "Samedi": 0 };
+                    let dayHeaders = [];
                     textContent.items.forEach(item => {
                         let str = item.str.trim();
-                        for (let frDay in dayHeaders) {
-                            if (str.includes(frDay) && dayHeaders[frDay] === 0) {
-                                dayHeaders[frDay] = item.transform[4]; // X coordinate
+                        for (let frDay in dayMap) {
+                            if (str.includes(frDay)) {
+                                // Avoid duplicates if header appears multiple times
+                                if (!dayHeaders.find(d => d.frDay === frDay)) {
+                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4] });
+                                }
                             }
                         }
                     });
 
-                    let foundDays = [];
-                    for (let frDay in dayHeaders) {
-                        if (dayHeaders[frDay] > 0) foundDays.push({ frDay: frDay, x: dayHeaders[frDay] });
-                    }
-                    foundDays.sort((a, b) => a.x - b.x); // Sort left to right
-                    
-                    const minX = foundDays.length > 0 ? foundDays[0].x : 0;
-
-                    // 2. Calculate strict midpoints (boundaries) between columns
-                    let boundaries = [];
-                    for (let i = 0; i < foundDays.length - 1; i++) {
-                        boundaries.push((foundDays[i].x + foundDays[i+1].x) / 2);
-                    }
+                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
+                    const minX = dayHeaders.length > 0 ? dayHeaders[0].x : 0;
 
                     let dayBuckets = {};
-                    foundDays.forEach(d => {
-                        let enDay = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" }[d.frDay];
-                        dayBuckets[enDay] = [];
-                    });
+                    dayHeaders.forEach(d => { dayBuckets[d.enDay] = []; });
 
                     textContent.items.forEach(item => {
                         if (!item.str.trim()) return;
                         let x = item.transform[4];
                         let y = item.transform[5];
                         
-                        // If X is left of the first day, it's metadata/timeline
-                        if (x < minX - 10) {
+                        // If X is far left, it's metadata/timeline
+                        if (x < minX - 20) {
                             metadataText += item.str + " ";
                             return;
                         }
 
-                        // Find exact column index based on boundaries
-                        let colIndex = 0;
-                        for (let i = 0; i < boundaries.length; i++) {
-                            if (x > boundaries[i]) colIndex = i + 1;
-                            else break;
-                        }
+                        // Find CLOSEST day column (Nearest Neighbor)
+                        let closestDay = null;
+                        let minDist = Infinity;
+                        dayHeaders.forEach(d => {
+                            let dist = Math.abs(x - d.x);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                closestDay = d.enDay;
+                            }
+                        });
                         
-                        let enDay = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" }[foundDays[colIndex].frDay];
-                        dayBuckets[enDay].push({ x: x, y: y, str: item.str });
+                        if (closestDay) {
+                            dayBuckets[closestDay].push({ x: x, y: y, str: item.str });
+                        }
                     });
 
-                    // Sort items in each day by Y (top to bottom) then X (left to right)
+                    // Sort items by Y (top to bottom) then X (left to right)
                     for (let enDay in dayBuckets) {
                         dayBuckets[enDay].sort((a, b) => {
                             if (Math.abs(a.y - b.y) > 5) return b.y - a.y; 
                             return a.x - b.x; 
                         });
                         
-                        // Reconstruct lines
                         let dayStr = "";
                         let prevY = null;
                         dayBuckets[enDay].forEach(item => {
@@ -226,44 +221,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (Object.values(dayTexts).join("").length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                // Check if API key is set
-                if (GROQ_API_KEY === "gsk_VOTRE_CLE_ICI" || !GROQ_API_KEY || GROQ_API_KEY.length < 20) {
-                    throw new Error("Groq API Key is missing! Please add your gsk_ key in app.js");
-                }
-
                 pdfStatus.innerText = "⏳ AI is analyzing the separated columns...";
 
-                // 3. Send to Groq AI
-                const prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using strict column coordinates.
-                
-                Here is the raw text for each day:
+                // 2. Construct AI Prompt with strict day delimiters
+                let prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using column coordinates.
                 
                 Metadata:
                 ${metadataText}
-                
-                Monday:
-                ${dayTexts.Monday}
-                
-                Tuesday:
-                ${dayTexts.Tuesday}
-                
-                Wednesday:
-                ${dayTexts.Wednesday}
-                
-                Thursday:
-                ${dayTexts.Thursday}
-                
-                Friday:
-                ${dayTexts.Friday}
-                
-                Saturday:
-                ${dayTexts.Saturday}
-                
+                `;
+
+                for (let enDay in dayTexts) {
+                    if(dayTexts[enDay].trim().length > 0) {
+                        prompt += `\n<day name="${enDay}">\n${dayTexts[enDay]}\n</day>\n`;
+                    }
+                }
+
+                prompt += `
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each day, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
-                3. IMPORTANT: Some words are split across lines in the PDF (e.g., "program" and "mation"). You MUST merge them back into the correct word ("programmation").
-                4. Do not include the timeline header (08:00, 09:00, etc.) as classes.
+                2. For each <day> block, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
+                3. The classes are already inside their correct <day> block. DO NOT assign a class to a different day.
+                4. Merge split words (e.g., "program" and "mation" -> "programmation").
+                5. Ignore the timeline header (08:00, 09:00).
                 
                 Return a valid JSON object:
                 {
@@ -273,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
+                // 3. Send to Groq AI
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: {
