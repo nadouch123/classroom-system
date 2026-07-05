@@ -176,9 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 pdfStatus.innerText = "⏳ AI is analyzing the reconstructed table...";
 
-                // 2. Send to Groq AI
-                const prompt = `You are an expert university schedule parser. 
-                Analyze the following tab-separated table extracted from a schedule PDF. The text is in French.
+                // 2. Send to Groq AI with strict JSON mode
+                const prompt = `Analyze the following tab-separated table extracted from a schedule PDF. The text is in French.
                 
                 The table structure has been reconstructed. The first rows contain the days of the week (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) as column headers.
                 The first column usually contains times.
@@ -190,14 +189,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 3. If a date is in DD/MM/YYYY format, convert it to YYYY-MM-DD.
                 4. Do not invent classes. Only use the ones provided in the table.
                 
-                Return ONLY a valid JSON object with the following structure:
+                Return a valid JSON object with the following structure:
                 {
                   "validity": { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" },
                   "schedule": [
                     { "day": "Monday", "start": "HH:MM", "end": "HH:MM", "subject": "...", "professor": "...", "section": "..." }
                   ]
                 }
-                Do not include markdown formatting like \`\`\`json or any other text.
                 
                 Reconstructed Table:
                 ${rawText}`;
@@ -210,8 +208,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     body: JSON.stringify({
                         model: "llama-3.3-70b-versatile",
-                        messages: [{ role: "user", content: prompt }],
-                        temperature: 0.1
+                        messages: [
+                            { role: "system", content: "You are a JSON API. Respond ONLY with a valid JSON object. No markdown, no explanations, no text before or after the JSON." },
+                            { role: "user", content: prompt }
+                        ],
+                        temperature: 0.1,
+                        response_format: { type: "json_object" }, // FORCES STRICT JSON
+                        max_tokens: 4096
                     })
                 });
 
@@ -225,14 +228,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.choices && data.choices.length > 0) {
                     let aiText = data.choices[0].message.content;
                     
-                    // Robust JSON extraction
-                    const jsonStart = aiText.indexOf('{');
-                    const jsonEnd = aiText.lastIndexOf('}');
-                    if (jsonStart === -1 || jsonEnd === -1) {
-                        throw new Error("AI did not return valid JSON.");
-                    }
-                    const jsonString = aiText.substring(jsonStart, jsonEnd + 1);
-                    const aiResult = JSON.parse(jsonString);
+                    // Because of response_format, aiText is guaranteed to be valid JSON
+                    const aiResult = JSON.parse(aiText);
                     
                     // 3. Apply validity dates
                     if (aiResult.validity) {
