@@ -200,7 +200,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         row.items.forEach(item => {
                             let assigned = false;
                             
-                            // Check if it belongs to a day column
                             for (let b of boundaries) {
                                 if (item.x >= b.start && item.x < b.end) {
                                     rowDayData[b.day].push(item.str);
@@ -209,7 +208,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                 }
                             }
                             
-                            // If not assigned to a day, it's either time or metadata
                             if (!assigned) {
                                 if (dayHeaders.length > 0 && item.x < dayHeaders[0].x) {
                                     if (item.str.match(/\d{1,2}:\d{2}/) || item.str.match(/\d{1,2}h\d{2}/)) {
@@ -222,15 +220,24 @@ document.addEventListener('DOMContentLoaded', () => {
                         });
 
                         timeStr = timeStr.trim();
-                        if (timeStr) {
+                        let hasNewTime = timeStr !== "";
+                        if (hasNewTime) {
                             lastTimeStr = timeStr;
-                        } else {
-                            timeStr = lastTimeStr; // Carry over time if subject wraps to next line
                         }
 
                         for (let day in rowDayData) {
                             if (rowDayData[day].length > 0) {
-                                dayData[day].push(`Time: ${timeStr} | ${rowDayData[day].join(" ")}`);
+                                let cellText = rowDayData[day].join(" ").trim();
+                                if (cellText === "") continue;
+
+                                // FIX: If no time is present, it's a wrapped line from the cell above. Append it!
+                                if (!hasNewTime && dayData[day].length > 0) {
+                                    let lastIdx = dayData[day].length - 1;
+                                    dayData[day][lastIdx] += " " + cellText;
+                                } else {
+                                    let displayTime = hasNewTime ? timeStr : (lastTimeStr || "N/A");
+                                    dayData[day].push(`Time: ${displayTime} | ${cellText}`);
+                                }
                             }
                         }
                     });
@@ -260,10 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL: If a subject is split across two consecutive time slots because of cell wrapping (e.g., "Sector Innov" at 08:00-09:00 and "Innovation, Renewable" at 09:00-10:00), MERGE them into a single class from 08:00 to 10:00. Do not create duplicate classes for wrapped text.
+                5. CRITICAL (MERGING): If a subject is split across consecutive time slots (e.g., "Sector Innov" at 08:00-09:00, "Innovation" at 09:00-10:00), you MUST MERGE them into a single class. 
+                   - Combine the subject strings perfectly (e.g., "Sector Innov. (Materials Innovation, Renewable Energy").
+                   - Use the START time of the first slot (08:00) and the END time of the last slot (11:00).
+                   - Use the professor and section from whichever slot contains them.
                 6. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
                 7. Do NOT invent classes. Only return classes explicitly present in the text.
-                8. Merge split words correctly.
                 
                 Return a valid JSON object:
                 {
@@ -311,7 +320,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         let dayRaw = cls.day ? cls.day.trim() : "";
                         let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
                         
-                        // FIX: Only add if subject exists and is not empty
                         if (scheduleData.schedule[day] && cls.subject && cls.subject.trim() !== "") {
                             scheduleData.schedule[day].push({
                                 start: cls.start,
