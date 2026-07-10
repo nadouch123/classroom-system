@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF VISUAL LINE EXTRACTION + GROQ AI ======
+    // ====== PDF GRID EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reading PDF visual layout...";
+        pdfStatus.innerText = "⏳ Reconstructing PDF grid...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -122,72 +122,126 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let fullText = "";
+                let fullGridText = "";
+                let metadataText = "";
+
+                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    // Map items to include x, y, and font height
-                    let items = textContent.items.map(item => ({
-                        str: item.str,
-                        x: item.transform[4],
-                        y: item.transform[5],
-                        height: item.height || 10
-                    }));
-
-                    // Sort by Y (Top to Bottom), then X (Left to Right)
-                    items.sort((a, b) => {
-                        let yThreshold = Math.max(a.height, b.height) * 0.5;
-                        if (Math.abs(a.y - b.y) > yThreshold) {
-                            return b.y - a.y; // Top to bottom
+                    // 1. Find Day Columns
+                    let dayHeaders = [];
+                    textContent.items.forEach(item => {
+                        let str = item.str.trim();
+                        for (let frDay in dayMap) {
+                            if (str.includes(frDay)) {
+                                if (!dayHeaders.find(d => d.frDay === frDay)) {
+                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4] });
+                                }
+                            }
                         }
-                        return a.x - b.x; // Left to right
                     });
 
-                    // Group into visual lines based on Y proximity
-                    let pageText = "";
-                    let prevY = null;
-                    let prevHeight = 10;
+                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
                     
-                    items.forEach(item => {
+                    // Calculate column boundaries (midpoints between headers)
+                    let boundaries = [];
+                    for (let j = 0; j < dayHeaders.length; j++) {
+                        let startX = j === 0 ? -Infinity : dayHeaders[j-1].x + (dayHeaders[j].x - dayHeaders[j-1].x) / 2;
+                        let endX = j === dayHeaders.length - 1 ? Infinity : dayHeaders[j].x + (dayHeaders[j+1].x - dayHeaders[j].x) / 2;
+                        boundaries.push({ start: startX, end: endX, day: dayHeaders[j].enDay });
+                    }
+
+                    // 2. Group items into Rows based on Y coordinates
+                    let rows = [];
+                    textContent.items.forEach(item => {
                         if (!item.str.trim()) return;
+                        let y = item.transform[5];
+                        let height = item.height || 10;
                         
-                        let yThreshold = prevHeight * 0.5;
-                        if (prevY !== null && Math.abs(item.y - prevY) > yThreshold) {
-                            pageText += "\n"; // New line
-                        } else if (pageText.length > 0 && !pageText.endsWith(" ") && !pageText.endsWith("\n")) {
-                            pageText += " "; // Same line, add space
+                        let placed = false;
+                        for (let row of rows) {
+                            if (Math.abs(row.y - y) <= height * 0.5) {
+                                row.items.push(item);
+                                placed = true;
+                                break;
+                            }
                         }
-                        
-                        pageText += item.str;
-                        prevY = item.y;
-                        prevHeight = item.height || 10;
+                        if (!placed) rows.push({ y: y, items: [item] });
                     });
 
-                    fullText += pageText + "\n\n--- Page Break ---\n\n";
+                    // Sort rows top to bottom
+                    rows.sort((a, b) => b.y - a.y);
+
+                    // 3. Process each row
+                    rows.forEach(row => {
+                        // Sort items in row left to right
+                        row.items.sort((a, b) => a.transform[4] - b.transform[4]);
+                        
+                        let timeStr = "";
+                        let dayData = {};
+                        dayHeaders.forEach(h => dayData[h.enDay] = "");
+                        
+                        row.items.forEach(item => {
+                            let x = item.transform[4];
+                            let str = item.str.trim();
+                            
+                            // If it's before the first day column, it's a time or metadata
+                            if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
+                                // Basic check to see if it looks like a time
+                                if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
+                                    timeStr += str + " ";
+                                } else {
+                                    metadataText += str + " ";
+                                }
+                            } else {
+                                // Assign to correct day column
+                                for (let b of boundaries) {
+                                    if (x >= b.start && x < b.end) {
+                                        dayData[b.day] += str + " ";
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                        
+                        timeStr = timeStr.trim();
+                        let hasData = Object.values(dayData).some(v => v.trim() !== "");
+                        if (!timeStr && !hasData) return;
+                        
+                        let rowStr = `Time: ${timeStr || 'N/A'}`;
+                        for (let day in dayData) {
+                            if (dayData[day].trim()) {
+                                rowStr += ` | ${day}: ${dayData[day].trim()}`;
+                            }
+                        }
+                        fullGridText += rowStr + "\n";
+                    });
                 }
 
-                if (fullText.trim().length === 0) throw new Error("Could not extract any text from this PDF.");
+                if (fullGridText.trim().length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is analyzing the schedule grid...";
+                pdfStatus.innerText = "⏳ AI is analyzing the structured grid...";
 
-                let prompt = `You are a university schedule parser. I have extracted text from a schedule PDF, preserving the visual layout (top to bottom, left to right).
+                let prompt = `You are a university schedule parser. I have extracted the schedule PDF into a row-by-row grid format. Each line represents a time slot and the classes for each day on that row.
                 
-                Here is the extracted text:
-                <document>
-                ${fullText}
-                </document>
+                Metadata:
+                ${metadataText}
+                
+                Here is the extracted grid:
+                <grid>
+                ${fullGridText}
+                </grid>
                 
                 RULES:
-                1. The text is laid out like a table. Days of the week (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) are column headers. Times (08:30, 10:00) are on the far left.
-                2. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                3. For each day, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
-                4. Ensure all times are strictly 24-hour format HH:MM (e.g., "08:30" not "8:30").
-                5. If a subject, professor, or section is split across lines, merge them into a single string.
-                6. Match the start and end times to the correct classes based on their row and column position.
-                7. Ignore header rows like "08:00", "09:00", "10:00" unless they are explicitly part of a class time block.
-                8. Translate French days to English (Lundi -> Monday, Mardi -> Tuesday, etc.).
+                1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                2. For each row, the "Time:" field contains the start and end times (e.g., "08:30 11:30" or "08:30 - 11:30"). Use these times for the classes in that row.
+                3. If Time is 'N/A', ignore the row.
+                4. For each day column, extract the class details (subject, professor, section).
+                5. Ensure all times are strictly 24-hour format HH:MM.
+                6. Merge split words correctly (e.g., "program" and "mation" -> "programmation").
                 
                 Return a valid JSON object:
                 {
