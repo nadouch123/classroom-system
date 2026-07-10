@@ -260,9 +260,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
-                6. Do NOT invent classes. Only return classes explicitly present in the text.
-                7. Merge split words correctly.
+                5. CRITICAL: If a subject is split across two consecutive time slots because of cell wrapping (e.g., "Sector Innov" at 08:00-09:00 and "Innovation, Renewable" at 09:00-10:00), MERGE them into a single class from 08:00 to 10:00. Do not create duplicate classes for wrapped text.
+                6. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
+                7. Do NOT invent classes. Only return classes explicitly present in the text.
+                8. Merge split words correctly.
                 
                 Return a valid JSON object:
                 {
