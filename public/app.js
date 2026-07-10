@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF SPATIAL COORDINATE MAPPING + GROQ AI ======
+    // ====== PDF ROW-BASED CSV EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting spatial coordinates...";
+        pdfStatus.innerText = "⏳ Extracting PDF rows...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -122,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let finalPromptText = "";
+                let csvText = "";
                 let metadataText = "";
 
                 const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
@@ -156,93 +156,117 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
 
-                    // 2. Create Buckets for Timeline and Days
-                    let timeBucket = [];
-                    let dayBuckets = {};
-                    dayHeaders.forEach(h => dayBuckets[h.enDay] = []);
-
-                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
+                    // 2. Group items into Rows based on Y coordinates
+                    let rows = [];
+                    let currentY = null;
+                    let currentRow = [];
                     
+                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
+                    validItems.sort((a, b) => {
+                        let yA = a.transform[5];
+                        let yB = b.transform[5];
+                        if (Math.abs(yA - yB) > 5) return yB - yA; // Top to bottom
+                        return a.transform[4] - b.transform[4]; // Left to right
+                    });
+
                     validItems.forEach(item => {
                         let y = item.transform[5];
                         let x = item.transform[4];
                         let str = item.str.trim();
 
-                        // Skip headers
                         if (y >= headerY) return;
 
-                        let assigned = false;
-                        for (let b of boundaries) {
-                            if (x >= b.start && x < b.end) {
-                                dayBuckets[b.day].push({ y: y, str: str });
-                                assigned = true;
+                        if (currentY === null || Math.abs(y - currentY) > 5) {
+                            if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
+                            currentRow = [];
+                            currentY = y;
+                        }
+                        currentRow.push({ x: x, str: str });
+                    });
+                    if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
+
+                    // 3. Process each row into a CSV format
+                    let lastTimeStr = "";
+
+                    rows.forEach(row => {
+                        let timeStr = "";
+                        let rowDayData = {};
+                        dayHeaders.forEach(h => rowDayData[h.enDay] = []);
+
+                        row.items.forEach(item => {
+                            let assigned = false;
+                            for (let b of boundaries) {
+                                if (item.x >= b.start && item.x < b.end) {
+                                    rowDayData[b.day].push(item.str);
+                                    assigned = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!assigned) {
+                                if (dayHeaders.length > 0 && item.x < dayHeaders[0].x) {
+                                    if (item.str.match(/\d{1,2}:\d{2}/) || item.str.match(/\d{1,2}h\d{2}/)) {
+                                        timeStr += item.str + " ";
+                                    } else {
+                                        metadataText += item.str + " ";
+                                    }
+                                }
+                            }
+                        });
+
+                        timeStr = timeStr.trim();
+                        let hasNewTime = timeStr !== "";
+                        if (hasNewTime) {
+                            lastTimeStr = timeStr;
+                        }
+
+                        let hasData = false;
+                        for (let day in rowDayData) {
+                            if (rowDayData[day].join("").trim() !== "") {
+                                hasData = true;
                                 break;
                             }
                         }
-                        
-                        if (!assigned) {
-                            if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
-                                if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
-                                    timeBucket.push({ y: y, str: str });
-                                } else {
-                                    metadataText += str + " ";
+
+                        // Only output row if it has data or a time (to keep timeline intact)
+                        if (hasData || hasNewTime) {
+                            let displayTime = hasNewTime ? timeStr : "(continued)";
+                            let rowStr = `Time: ${displayTime}`;
+                            
+                            for (let day in rowDayData) {
+                                let cellText = rowDayData[day].join(" ").trim();
+                                if (cellText) {
+                                    rowStr += ` | ${day}: ${cellText}`;
                                 }
                             }
+                            csvText += rowStr + "\n";
                         }
                     });
-
-                    // Sort buckets by Y descending (top to bottom)
-                    timeBucket.sort((a, b) => b.y - a.y);
-                    for (let day in dayBuckets) {
-                        dayBuckets[day].sort((a, b) => b.y - a.y);
-                    }
-
-                    // 3. Build prompt text with Y coordinates
-                    let timelineStr = "<Timeline>\n";
-                    timeBucket.forEach(t => {
-                        timelineStr += `${t.str} (Y=${t.y})\n`;
-                    });
-                    timelineStr += "</Timeline>\n";
-                    finalPromptText += timelineStr;
-
-                    for (let day in dayBuckets) {
-                        if (dayBuckets[day].length > 0) {
-                            finalPromptText += `\n<${day}>\n`;
-                            dayBuckets[day].forEach(item => {
-                                finalPromptText += `${item.str} (Y=${item.y})\n`;
-                            });
-                            finalPromptText += `</${day}>\n`;
-                        }
-                    }
                 }
 
-                if (finalPromptText.trim().length === 0) throw new Error("Could not extract any schedule data from this PDF.");
+                if (csvText.trim().length === 0) throw new Error("Could not extract any schedule data from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is mapping coordinates to timeline...";
+                pdfStatus.innerText = "⏳ AI is reading the CSV rows...";
 
-                let prompt = `You are an expert schedule parser AI. I have extracted text from a university schedule PDF.
-                I have separated the text into day columns. I have also provided the Y (vertical) coordinates for each text fragment and for the timeline.
-                
-                - Y increases from bottom to top.
-                - The Timeline shows the start of each hour (e.g., 08:00 is at Y=100, 09:00 is at Y=200).
-                - A class cell spans vertically between two timeline markers. For example, a class from 10:00 to 12:00 will have text with Y coordinates between Y=300 (10:00) and Y=500 (12:00).
-                - Text inside a cell may be split across multiple lines (wrapped text). You MUST merge these lines into a single class.
-                - To find the start and end times of a class, look at the Y coordinates of its text. The start time is the timeline marker immediately below the text. The end time is the timeline marker immediately above the text.
-                - If a class spans multiple hours, use the start of the first hour and the start of the next hour after the class ends.
+                let prompt = `You are a university schedule parser. I have extracted the schedule PDF row by row into a CSV-like format. Each row has a Time and the text for each day.
+                If a row says 'Time: (continued)', it means the text is a continuation of the class from the previous row (wrapped text).
                 
                 Metadata:
                 ${metadataText}
                 
                 Here is the extracted data:
-                ${finalPromptText}
+                ${csvText}
                 
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each <day> block, merge wrapped text lines into a single class. Combine the subject strings perfectly.
-                3. Determine the start and end times using the Y coordinates and the Timeline. Ensure times are HH:MM.
-                4. If multiple classes exist in the same day, keep them separate. Do NOT merge them if they are in different time blocks.
-                5. If a cell is empty, ignore it.
-                6. Separate the subject, professor, and section logically.
+                2. CRITICAL (MERGING WRAPPED TEXT): If a class's text is split across multiple rows (including 'continued' rows), merge them into a single class. 
+                   - Concatenate the text strings directly WITHOUT adding any commas or punctuation.
+                   - The start time is the Time of the FIRST row where the text appears.
+                   - The end time is the Time of the NEXT row that has a time (not 'continued'). For example, if text appears in row 'Time: 10:00' and then 'Time: (continued)', and the next row is 'Time: 12:00', the class ends at 12:00.
+                3. CRITICAL (EXPLICIT TIMES): If a row has multiple times (e.g., 'Time: 08:30 11:30' or 'Time: 08:30 - 11:30'), use the first as start and the last as end.
+                4. CRITICAL (SEPARATE CLASSES): Do NOT merge separate classes. If a day has text at 08:30 and then text at 11:30, they are separate classes.
+                5. CRITICAL (EMPTY SLOTS): If a day has no text in a row, ignore it.
+                6. Separate the subject, professor, and section logically from the merged text.
                 
                 Return a valid JSON object:
                 {
