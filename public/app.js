@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF JS ROW MERGING + GROQ AI ======
+    // ====== PDF SPATIAL Y-COORDINATE MAPPING + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting PDF rows...";
+        pdfStatus.innerText = "⏳ Extracting spatial coordinates...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
                     
-                    // Calculate column boundaries
+                    // Calculate column boundaries (strict midpoints between headers)
                     let boundaries = [];
                     for (let j = 0; j < dayHeaders.length; j++) {
                         let startX = j === 0 ? -10000 : (dayHeaders[j-1].x + dayHeaders[j].x) / 2;
@@ -156,99 +156,94 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
 
-                    // 2. Group items into Rows based on Y coordinates
-                    let rows = [];
-                    let currentY = null;
-                    let currentRow = [];
-                    
-                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
-                    validItems.sort((a, b) => {
-                        let yA = a.transform[5];
-                        let yB = b.transform[5];
-                        if (Math.abs(yA - yB) > 5) return yB - yA; // Top to bottom
-                        return a.transform[4] - b.transform[4]; // Left to right
-                    });
-
-                    validItems.forEach(item => {
-                        let y = item.transform[5];
-                        let x = item.transform[4];
+                    // 2. Extract Timeline (Exact Y coordinates of times)
+                    let timeline = [];
+                    textContent.items.forEach(item => {
                         let str = item.str.trim();
-
-                        if (y >= headerY) return;
-
-                        if (currentY === null || Math.abs(y - currentY) > 5) {
-                            if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
-                            currentRow = [];
-                            currentY = y;
+                        let x = item.transform[4];
+                        let y = item.transform[5];
+                        
+                        if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
+                            if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
+                                let cleanTime = str.replace('h', ':').trim();
+                                if (!timeline.find(t => t.time === cleanTime)) {
+                                    timeline.push({ y: y, time: cleanTime });
+                                }
+                            } else {
+                                metadataText += str + " ";
+                            }
                         }
-                        currentRow.push({ x: x, str: str });
                     });
-                    if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
+                    timeline.sort((a, b) => b.y - a.y); // Sort top to bottom (highest Y first)
 
-                    // 3. Process rows and merge wrapped text in JS
-                    let lastTimeStr = "";
-                    let lastDayData = {}; 
+                    // 3. Collect text items for each day column
+                    let dayItems = {};
+                    dayHeaders.forEach(h => dayItems[h.enDay] = []);
+                    
+                    textContent.items.forEach(item => {
+                        let str = item.str.trim();
+                        if (!str) return;
+                        let x = item.transform[4];
+                        let y = item.transform[5];
+                        if (y >= headerY) return; // Skip headers
+                        
+                        for (let b of boundaries) {
+                            if (x >= b.start && x < b.end) {
+                                dayItems[b.day].push({ y: y, str: str });
+                                break;
+                            }
+                        }
+                    });
 
-                    rows.forEach(row => {
-                        let timeStr = "";
-                        let rowDayData = {};
-                        dayHeaders.forEach(h => rowDayData[h.enDay] = []);
+                    // Sort items by Y descending (top to bottom)
+                    for (let day in dayItems) {
+                        dayItems[day].sort((a, b) => b.y - a.y);
+                    }
 
-                        row.items.forEach(item => {
-                            let assigned = false;
-                            for (let b of boundaries) {
-                                if (item.x >= b.start && item.x < b.end) {
-                                    rowDayData[b.day].push(item.str);
-                                    assigned = true;
+                    // 4. Match text to exact timeline blocks using Y coordinates
+                    let dayBlocks = {};
+                    
+                    for (let day in dayItems) {
+                        dayBlocks[day] = [];
+                        let currentBlock = null;
+                        
+                        dayItems[day].forEach(item => {
+                            // Find the timeline marker immediately above this text
+                            let startIndex = -1;
+                            for (let i = 0; i < timeline.length; i++) {
+                                if (timeline[i].y >= item.y) {
+                                    startIndex = i;
+                                } else {
                                     break;
                                 }
                             }
                             
-                            if (!assigned) {
-                                if (dayHeaders.length > 0 && item.x < dayHeaders[0].x) {
-                                    if (item.str.match(/\d{1,2}:\d{2}/) || item.str.match(/\d{1,2}h\d{2}/)) {
-                                        timeStr += item.str + " ";
-                                    } else {
-                                        metadataText += item.str + " ";
-                                    }
+                            // If we found a valid block
+                            if (startIndex !== -1 && startIndex < timeline.length - 1) {
+                                let start = timeline[startIndex].time;
+                                let end = timeline[startIndex + 1].time;
+                                
+                                // If text belongs to the same time block, append it
+                                if (currentBlock && currentBlock.start === start && currentBlock.end === end) {
+                                    currentBlock.text += " " + item.str;
+                                } 
+                                // Otherwise, create a new block
+                                else {
+                                    if (currentBlock) dayBlocks[day].push(currentBlock);
+                                    currentBlock = { start: start, end: end, text: item.str };
                                 }
                             }
                         });
+                        if (currentBlock) dayBlocks[day].push(currentBlock);
+                    }
 
-                        timeStr = timeStr.trim();
-                        let hasNewTime = timeStr !== "";
-
-                        if (hasNewTime) {
-                            // Save previous class if exists
-                            for (let day in lastDayData) {
-                                if (lastDayData[day] && lastDayData[day].trim() !== "") {
-                                    promptData.push(`Time: ${lastTimeStr} | Day: ${day} | Text: ${lastDayData[day].trim()}`);
-                                }
+                    // 5. Format for AI
+                    for (let day in dayBlocks) {
+                        dayBlocks[day].forEach(block => {
+                            if (block.text.trim() !== "") {
+                                promptData.push(`Day: ${day} | Start: ${block.start} | End: ${block.end} | Text: ${block.text.trim()}`);
                             }
-                            lastTimeStr = timeStr;
-                            lastDayData = {};
-                            
-                            for (let day in rowDayData) {
-                                if (rowDayData[day].length > 0) {
-                                    lastDayData[day] = rowDayData[day].join(" ").trim();
-                                }
-                            }
-                        } else {
-                            // Append to previous class text
-                            for (let day in rowDayData) {
-                                if (rowDayData[day].length > 0) {
-                                    if (!lastDayData[day]) lastDayData[day] = "";
-                                    lastDayData[day] += " " + rowDayData[day].join(" ").trim();
-                                }
-                            }
-                        }
-                    });
-
-                    // Save the very last class
-                    for (let day in lastDayData) {
-                        if (lastDayData[day] && lastDayData[day].trim() !== "") {
-                            promptData.push(`Time: ${lastTimeStr} | Day: ${day} | Text: ${lastDayData[day].trim()}`);
-                        }
+                        });
                     }
                 }
 
@@ -256,8 +251,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 pdfStatus.innerText = "⏳ AI is organizing classes...";
 
-                let prompt = `You are a university schedule parser. I have extracted classes from a PDF schedule. Each line contains a Time, a Day, and a raw Text string.
-                The raw text contains the subject, professor, and section, but it may be slightly messy or have wrapped words that need to be joined.
+                let prompt = `You are a university schedule parser. I have extracted classes from a PDF schedule using exact coordinate mapping.
+                Each line contains a Day, an exact Start time, an exact End time, and a raw Text string.
+                The schedule is divided into 1-hour blocks. If a class spans multiple hours, it will appear as multiple blocks with the text continued.
                 
                 Metadata:
                 ${metadataText}
@@ -267,10 +263,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 RULES:
                 1. Extract validity dates from metadata (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each line, extract the start and end times from the "Time" field. If it says "Time: 10:00 12:00", start is "10:00" and end is "12:00". Ensure HH:MM format.
-                3. Clean up the "Text" field. If a word is split in half (e.g., "I nnovation"), join it correctly ("Innovation"). 
+                2. CRITICAL (MERGING): If a class's text is split across multiple consecutive time blocks (e.g., Block 1: 10:00-11:00 "Sector Innov", Block 2: 11:00-12:00 "nnovation, Renewable Energy"), you MUST merge them into a single class.
+                   - The start time is the start time of the FIRST block (10:00).
+                   - The end time is the end time of the LAST block (12:00).
+                   - Add a space between words if necessary. If a word is split in half, join them directly without a space.
+                   - DO NOT add commas or periods.
+                3. CRITICAL (SEPARATE CLASSES): Do NOT merge separate classes. If Block 1 ends at 10:00 and Block 2 starts at 10:00 with a completely different subject, they are separate classes.
                 4. Separate the subject, professor, and section logically from the cleaned text.
-                5. Output each class as a separate JSON entry. Do NOT merge classes. Do NOT invent classes.
                 
                 Return a valid JSON object:
                 {
