@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF STRICT COLUMN EXTRACTION + GROQ AI ======
+    // ====== PDF SPATIAL COORDINATE MAPPING + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Isolating PDF columns...";
+        pdfStatus.innerText = "⏳ Extracting spatial coordinates...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -156,99 +156,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
 
-                    // 2. Group items into Rows based on Y coordinates
-                    let rows = [];
-                    let currentY = null;
-                    let currentRow = [];
-                    
-                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
-                    validItems.sort((a, b) => {
-                        let yA = a.transform[5];
-                        let yB = b.transform[5];
-                        if (Math.abs(yA - yB) > 5) return yB - yA; // Top to bottom
-                        return a.transform[4] - b.transform[4]; // Left to right
-                    });
+                    // 2. Create Buckets for Timeline and Days
+                    let timeBucket = [];
+                    let dayBuckets = {};
+                    dayHeaders.forEach(h => dayBuckets[h.enDay] = []);
 
+                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
+                    
                     validItems.forEach(item => {
                         let y = item.transform[5];
                         let x = item.transform[4];
                         let str = item.str.trim();
 
-                        // Skip headers and anything above them
+                        // Skip headers
                         if (y >= headerY) return;
 
-                        if (currentY === null || Math.abs(y - currentY) > 5) {
-                            if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
-                            currentRow = [];
-                            currentY = y;
-                        }
-                        currentRow.push({ x: x, str: str });
-                    });
-                    if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
-
-                    // 3. Process each row into its exact Day Column
-                    let dayData = {};
-                    dayHeaders.forEach(h => dayData[h.enDay] = []);
-                    
-                    let lastTimeStr = "";
-
-                    rows.forEach(row => {
-                        let timeStr = "";
-                        let rowDayData = {};
-                        dayHeaders.forEach(h => rowDayData[h.enDay] = []);
-
-                        row.items.forEach(item => {
-                            let assigned = false;
-                            
-                            for (let b of boundaries) {
-                                if (item.x >= b.start && item.x < b.end) {
-                                    rowDayData[b.day].push(item.str);
-                                    assigned = true;
-                                    break;
-                                }
+                        let assigned = false;
+                        for (let b of boundaries) {
+                            if (x >= b.start && x < b.end) {
+                                dayBuckets[b.day].push({ y: y, str: str });
+                                assigned = true;
+                                break;
                             }
-                            
-                            if (!assigned) {
-                                if (dayHeaders.length > 0 && item.x < dayHeaders[0].x) {
-                                    if (item.str.match(/\d{1,2}:\d{2}/) || item.str.match(/\d{1,2}h\d{2}/)) {
-                                        timeStr += item.str + " ";
-                                    } else {
-                                        metadataText += item.str + " ";
-                                    }
-                                }
-                            }
-                        });
-
-                        timeStr = timeStr.trim();
-                        let hasNewTime = timeStr !== "";
-                        if (hasNewTime) {
-                            lastTimeStr = timeStr;
                         }
-
-                        for (let day in rowDayData) {
-                            if (rowDayData[day].length > 0) {
-                                let cellText = rowDayData[day].join(" ").trim();
-                                if (cellText === "") continue;
-
-                                let displayTime = hasNewTime ? timeStr : (lastTimeStr || "N/A");
-                                dayData[day].push(`Time: ${displayTime} | ${cellText}`);
+                        
+                        if (!assigned) {
+                            if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
+                                if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
+                                    timeBucket.push({ y: y, str: str });
+                                } else {
+                                    metadataText += str + " ";
+                                }
                             }
                         }
                     });
 
-                    // 4. Build clean string for AI
-                    for (let day in dayData) {
-                        if (dayData[day].length > 0) {
-                            finalPromptText += `\n<${day}>\n${dayData[day].join("\n")}\n</${day}>\n`;
+                    // Sort buckets by Y descending (top to bottom)
+                    timeBucket.sort((a, b) => b.y - a.y);
+                    for (let day in dayBuckets) {
+                        dayBuckets[day].sort((a, b) => b.y - a.y);
+                    }
+
+                    // 3. Build prompt text with Y coordinates
+                    let timelineStr = "<Timeline>\n";
+                    timeBucket.forEach(t => {
+                        timelineStr += `${t.str} (Y=${t.y})\n`;
+                    });
+                    timelineStr += "</Timeline>\n";
+                    finalPromptText += timelineStr;
+
+                    for (let day in dayBuckets) {
+                        if (dayBuckets[day].length > 0) {
+                            finalPromptText += `\n<${day}>\n`;
+                            dayBuckets[day].forEach(item => {
+                                finalPromptText += `${item.str} (Y=${item.y})\n`;
+                            });
+                            finalPromptText += `</${day}>\n`;
                         }
                     }
                 }
 
                 if (finalPromptText.trim().length === 0) throw new Error("Could not extract any schedule data from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is reading the isolated columns...";
+                pdfStatus.innerText = "⏳ AI is mapping coordinates to timeline...";
 
-                let prompt = `You are a university schedule parser. I have extracted the schedule PDF and strictly separated the text into day columns using coordinate boundaries. 
+                let prompt = `You are an expert schedule parser AI. I have extracted text from a university schedule PDF.
+                I have separated the text into day columns. I have also provided the Y (vertical) coordinates for each text fragment and for the timeline.
+                
+                - Y increases from bottom to top.
+                - The Timeline shows the start of each hour (e.g., 08:00 is at Y=100, 09:00 is at Y=200).
+                - A class cell spans vertically between two timeline markers. For example, a class from 10:00 to 12:00 will have text with Y coordinates between Y=300 (10:00) and Y=500 (12:00).
+                - Text inside a cell may be split across multiple lines (wrapped text). You MUST merge these lines into a single class.
+                - To find the start and end times of a class, look at the Y coordinates of its text. The start time is the timeline marker immediately below the text. The end time is the timeline marker immediately above the text.
+                - If a class spans multiple hours, use the start of the first hour and the start of the next hour after the class ends.
                 
                 Metadata:
                 ${metadataText}
@@ -258,16 +238,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
-                3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
-                4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL (MERGING WRAPPED TEXT): The ONLY time you are allowed to merge two time slots is if the subject text is cut off mid-word or mid-sentence. 
-                   - When you merge slots, you MUST use the START time of the VERY FIRST slot in the sequence, and the END time of the VERY LAST slot in the sequence.
-                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". Slot 3 (10:00-11:00) has "BITRI Nabila". 
-                   - Merge them into ONE class: Start 08:00, End 11:00, Subject: "Sector Innov. (Materials Innovation, Renewable Energy)", Professor: "BITRI Nabila".
-                6. CRITICAL (DO NOT MERGE IDENTICAL CLASSES): If a subject text is COMPLETE, you must NEVER merge it with the next time slot, even if the next slot has the exact same subject name. Output them as separate JSON entries.
-                7. CRITICAL (EMPTY SLOTS): If the text after the pipe (|) is empty or contains no subject name, ignore it.
-                8. Do NOT invent classes. Do NOT deduplicate classes. 
+                2. For each <day> block, merge wrapped text lines into a single class. Combine the subject strings perfectly.
+                3. Determine the start and end times using the Y coordinates and the Timeline. Ensure times are HH:MM.
+                4. If multiple classes exist in the same day, keep them separate. Do NOT merge them if they are in different time blocks.
+                5. If a cell is empty, ignore it.
+                6. Separate the subject, professor, and section logically.
                 
                 Return a valid JSON object:
                 {
