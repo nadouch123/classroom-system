@@ -9,7 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // VOTRE CLÉ GROQ
     const GROQ_API_KEY = "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";
     
     let mqttClient;
@@ -101,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF COORDINATE CLUSTERING + GROQ AI ======
+    // ====== PDF VISUAL LINE EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -112,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reconstructing PDF columns...";
+        pdfStatus.innerText = "⏳ Reading PDF visual layout...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -123,104 +122,72 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let dayTexts = { "Monday": "", "Tuesday": "", "Wednesday": "", "Thursday": "", "Friday": "", "Saturday": "" };
-                let metadataText = "";
-
-                // Support both French and English day headers just in case
-                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday", "Monday": "Monday", "Tuesday": "Tuesday", "Wednesday": "Wednesday", "Thursday": "Thursday", "Friday": "Friday", "Saturday": "Saturday" };
+                let fullText = "";
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    let dayHeaders = [];
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        for (let frDay in dayMap) {
-                            if (str.includes(frDay)) {
-                                if (!dayHeaders.find(d => d.frDay === frDay)) {
-                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4] });
-                                }
-                            }
+                    // Map items to include x, y, and font height
+                    let items = textContent.items.map(item => ({
+                        str: item.str,
+                        x: item.transform[4],
+                        y: item.transform[5],
+                        height: item.height || 10
+                    }));
+
+                    // Sort by Y (Top to Bottom), then X (Left to Right)
+                    items.sort((a, b) => {
+                        let yThreshold = Math.max(a.height, b.height) * 0.5;
+                        if (Math.abs(a.y - b.y) > yThreshold) {
+                            return b.y - a.y; // Top to bottom
                         }
+                        return a.x - b.x; // Left to right
                     });
 
-                    dayHeaders.sort((a, b) => a.x - b.x);
-                    const minX = dayHeaders.length > 0 ? dayHeaders[0].x : 0;
-
-                    let dayBuckets = {};
-                    dayHeaders.forEach(d => { dayBuckets[d.enDay] = []; });
-
-                    textContent.items.forEach(item => {
+                    // Group into visual lines based on Y proximity
+                    let pageText = "";
+                    let prevY = null;
+                    let prevHeight = 10;
+                    
+                    items.forEach(item => {
                         if (!item.str.trim()) return;
-                        let x = item.transform[4];
-                        let y = item.transform[5];
                         
-                        if (x < minX - 20) {
-                            metadataText += item.str + " ";
-                            return;
+                        let yThreshold = prevHeight * 0.5;
+                        if (prevY !== null && Math.abs(item.y - prevY) > yThreshold) {
+                            pageText += "\n"; // New line
+                        } else if (pageText.length > 0 && !pageText.endsWith(" ") && !pageText.endsWith("\n")) {
+                            pageText += " "; // Same line, add space
                         }
-
-                        let closestDay = null;
-                        let minDist = Infinity;
-                        dayHeaders.forEach(d => {
-                            let dist = Math.abs(x - d.x);
-                            if (dist < minDist) {
-                                minDist = dist;
-                                closestDay = d.enDay;
-                            }
-                        });
                         
-                        if (closestDay) {
-                            dayBuckets[closestDay].push({ x: x, y: y, str: item.str });
-                        }
+                        pageText += item.str;
+                        prevY = item.y;
+                        prevHeight = item.height || 10;
                     });
 
-                    for (let enDay in dayBuckets) {
-                        dayBuckets[enDay].sort((a, b) => {
-                            if (Math.abs(a.y - b.y) > 5) return b.y - a.y; 
-                            return a.x - b.x; 
-                        });
-                        
-                        let dayStr = "";
-                        let prevY = null;
-                        dayBuckets[enDay].forEach(item => {
-                            if (prevY !== null && Math.abs(item.y - prevY) > 5) {
-                                dayStr += "\n";
-                            } else if (dayStr.length > 0) {
-                                dayStr += " ";
-                            }
-                            dayStr += item.str;
-                            prevY = item.y;
-                        });
-                        dayTexts[enDay] += dayStr + "\n";
-                    }
+                    fullText += pageText + "\n\n--- Page Break ---\n\n";
                 }
 
-                if (Object.values(dayTexts).join("").length === 0) throw new Error("Could not extract any text from this PDF.");
+                if (fullText.trim().length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is analyzing the separated columns...";
+                pdfStatus.innerText = "⏳ AI is analyzing the schedule grid...";
 
-                let prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using column coordinates.
+                let prompt = `You are a university schedule parser. I have extracted text from a schedule PDF, preserving the visual layout (top to bottom, left to right).
                 
-                Metadata:
-                ${metadataText}
-                `;
-
-                for (let enDay in dayTexts) {
-                    if(dayTexts[enDay].trim().length > 0) {
-                        prompt += `\n<day name="${enDay}">\n${dayTexts[enDay]}\n</day>\n`;
-                    }
-                }
-
-                prompt += `
+                Here is the extracted text:
+                <document>
+                ${fullText}
+                </document>
+                
                 RULES:
-                1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each <day> block, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
-                3. The classes are already inside their correct <day> block. DO NOT assign a class to a different day.
-                4. Merge split words (e.g., "program" and "mation" -> "programmation").
-                5. Ignore the timeline header (08:00, 09:00).
-                6. Ensure all times are strictly 24-hour format HH:MM (e.g., "08:30" not "8:30").
+                1. The text is laid out like a table. Days of the week (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) are column headers. Times (08:30, 10:00) are on the far left.
+                2. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                3. For each day, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
+                4. Ensure all times are strictly 24-hour format HH:MM (e.g., "08:30" not "8:30").
+                5. If a subject, professor, or section is split across lines, merge them into a single string.
+                6. Match the start and end times to the correct classes based on their row and column position.
+                7. Ignore header rows like "08:00", "09:00", "10:00" unless they are explicitly part of a class time block.
+                8. Translate French days to English (Lundi -> Monday, Mardi -> Tuesday, etc.).
                 
                 Return a valid JSON object:
                 {
@@ -265,7 +232,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     let addedCount = 0;
                     aiResult.schedule.forEach(cls => {
-                        // FIX: Trim day string to prevent errors from AI spacing
                         let dayRaw = cls.day ? cls.day.trim() : "";
                         let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
                         
@@ -318,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error("MQTT Failed:", err); 
                 isConnected = false;
                 updateStatus("Offline", "red"); 
-                fetchDevices(); // Load fallback devices
+                fetchDevices(); 
             }
         };
         mqttClient.connect(options);
@@ -351,7 +317,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
             message.destinationName = "raspberry/data_request";
             mqttClient.send(message);
-            // FIX: Corrected logical operator precedence
             setTimeout(() => { 
                 if (deviceSelect.options.length <= 1) updateDeviceListUI([]); 
             }, 3000);
@@ -413,7 +378,6 @@ document.addEventListener('DOMContentLoaded', () => {
         scheduleData.validity.to = validTo.value;
 
         try {
-            // Save to Supabase
             const { error: supabaseError } = await supabase.from('schedules').upsert({ 
                 classroom_id: scheduleData.classroom, 
                 validity: scheduleData.validity, 
@@ -422,7 +386,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (supabaseError) throw new Error(`Database Error: ${supabaseError.message}`);
 
-            // Check MQTT Connection before attempting to send
             if (!isConnected) {
                 alert("⚠️ Schedule saved to database, but MQTT is disconnected. Cannot send to physical devices.");
                 return;
