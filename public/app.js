@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF SPATIAL Y-COORDINATE MAPPING + GROQ AI ======
+    // ====== PDF VISUAL COORDINATE GRID + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting spatial coordinates...";
+        pdfStatus.innerText = "⏳ Extracting visual grid...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -122,154 +122,77 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let promptData = [];
-                let metadataText = "";
-
-                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
+                let gridText = "";
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    // 1. Find Day Columns
-                    let dayHeaders = [];
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        for (let frDay in dayMap) {
-                            if (str.includes(frDay)) {
-                                if (!dayHeaders.find(d => d.frDay === frDay)) {
-                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4], y: item.transform[5] });
-                                }
-                            }
-                        }
+                    let items = textContent.items.map(item => ({
+                        str: item.str,
+                        x: Math.round(item.transform[4]),
+                        y: Math.round(item.transform[5]),
+                        height: item.height || 10
+                    }));
+
+                    // Sort by Y descending (top to bottom), then X ascending (left to right)
+                    items.sort((a, b) => {
+                        if (a.y !== b.y) return b.y - a.y;
+                        return a.x - b.x;
                     });
 
-                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
+                    // Group into visual lines based on Y coordinates
+                    let lines = [];
+                    let currentY = null;
+                    let currentLine = [];
                     
-                    // Calculate column boundaries (strict midpoints between headers)
-                    let boundaries = [];
-                    for (let j = 0; j < dayHeaders.length; j++) {
-                        let startX = j === 0 ? -10000 : (dayHeaders[j-1].x + dayHeaders[j].x) / 2;
-                        let endX = j === dayHeaders.length - 1 ? 10000 : (dayHeaders[j].x + dayHeaders[j+1].x) / 2;
-                        boundaries.push({ start: startX, end: endX, day: dayHeaders[j].enDay });
-                    }
-
-                    let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
-
-                    // 2. Extract Timeline (Exact Y coordinates of times)
-                    let timeline = [];
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        let x = item.transform[4];
-                        let y = item.transform[5];
+                    items.forEach(item => {
+                        if (!item.str.trim()) return;
+                        let yThreshold = item.height * 0.5;
                         
-                        if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
-                            if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
-                                let cleanTime = str.replace('h', ':').trim();
-                                if (!timeline.find(t => t.time === cleanTime)) {
-                                    timeline.push({ y: y, time: cleanTime });
-                                }
-                            } else {
-                                metadataText += str + " ";
-                            }
+                        if (currentY === null || Math.abs(item.y - currentY) > yThreshold) {
+                            if (currentLine.length > 0) lines.push({ y: currentY, items: currentLine });
+                            currentLine = [];
+                            currentY = item.y;
                         }
+                        currentLine.push({ x: item.x, str: item.str });
                     });
-                    timeline.sort((a, b) => b.y - a.y); // Sort top to bottom (highest Y first)
+                    if (currentLine.length > 0) lines.push({ y: currentY, items: currentLine });
 
-                    // 3. Collect text items for each day column
-                    let dayItems = {};
-                    dayHeaders.forEach(h => dayItems[h.enDay] = []);
-                    
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        if (!str) return;
-                        let x = item.transform[4];
-                        let y = item.transform[5];
-                        if (y >= headerY) return; // Skip headers
-                        
-                        for (let b of boundaries) {
-                            if (x >= b.start && x < b.end) {
-                                dayItems[b.day].push({ y: y, str: str });
-                                break;
-                            }
-                        }
-                    });
-
-                    // Sort items by Y descending (top to bottom)
-                    for (let day in dayItems) {
-                        dayItems[day].sort((a, b) => b.y - a.y);
-                    }
-
-                    // 4. Match text to exact timeline blocks using Y coordinates
-                    let dayBlocks = {};
-                    
-                    for (let day in dayItems) {
-                        dayBlocks[day] = [];
-                        let currentBlock = null;
-                        
-                        dayItems[day].forEach(item => {
-                            // Find the timeline marker immediately above this text
-                            let startIndex = -1;
-                            for (let i = 0; i < timeline.length; i++) {
-                                if (timeline[i].y >= item.y) {
-                                    startIndex = i;
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            // If we found a valid block
-                            if (startIndex !== -1 && startIndex < timeline.length - 1) {
-                                let start = timeline[startIndex].time;
-                                let end = timeline[startIndex + 1].time;
-                                
-                                // If text belongs to the same time block, append it
-                                if (currentBlock && currentBlock.start === start && currentBlock.end === end) {
-                                    currentBlock.text += " " + item.str;
-                                } 
-                                // Otherwise, create a new block
-                                else {
-                                    if (currentBlock) dayBlocks[day].push(currentBlock);
-                                    currentBlock = { start: start, end: end, text: item.str };
-                                }
-                            }
+                    gridText += `\n--- Page ${i} ---\n`;
+                    lines.forEach(line => {
+                        let lineStr = `Y=${line.y}: `;
+                        line.items.forEach(item => {
+                            lineStr += `[x=${item.x}] "${item.str}" `;
                         });
-                        if (currentBlock) dayBlocks[day].push(currentBlock);
-                    }
-
-                    // 5. Format for AI
-                    for (let day in dayBlocks) {
-                        dayBlocks[day].forEach(block => {
-                            if (block.text.trim() !== "") {
-                                promptData.push(`Day: ${day} | Start: ${block.start} | End: ${block.end} | Text: ${block.text.trim()}`);
-                            }
-                        });
-                    }
+                        gridText += lineStr.trim() + "\n";
+                    });
                 }
 
-                if (promptData.length === 0) throw new Error("Could not extract any schedule data from this PDF.");
+                if (gridText.trim().length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is organizing classes...";
+                pdfStatus.innerText = "⏳ AI is reconstructing the schedule visually...";
 
-                let prompt = `You are a university schedule parser. I have extracted classes from a PDF schedule using exact coordinate mapping.
-                Each line contains a Day, an exact Start time, an exact End time, and a raw Text string.
-                The schedule is divided into 1-hour blocks. If a class spans multiple hours, it will appear as multiple blocks with the text continued.
+                let prompt = `You are an expert OCR and schedule parsing AI. I have extracted text from a university schedule PDF. I have provided the X (horizontal) and Y (vertical) coordinates for each text fragment.
+                - Y increases from bottom to top. (Higher Y is higher on the page).
+                - X increases from left to right.
+                - The schedule is a grid. Days (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) are column headers. 
+                - Times (08:00, 08:30, etc.) are on the far left.
+                - A class cell spans vertically between two times. The text inside the cell may be split across multiple lines (wrapped text). You MUST merge these lines into a single class.
                 
-                Metadata:
-                ${metadataText}
+                Your task:
+                1. Use the X coordinates to group texts into their respective Day columns. (Texts with similar X belong to the same column).
+                2. Use the Y coordinates to group texts into rows/time slots. (Texts with similar Y belong to the same time slot).
+                3. Reconstruct the classes. A class has a start time, end time, subject, professor, and section.
+                4. The start time is the time on the far left that is aligned with the top of the cell. The end time is the next time marker in the timeline.
+                5. If a class spans multiple hours, use the start of the first hour and the start of the next hour after the class ends.
+                6. Extract the validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                7. Translate French days to English (Lundi -> Monday).
+                8. Ensure all times are strictly 24-hour format HH:MM.
+                9. If a subject is split across multiple lines, merge them perfectly without adding extra commas.
                 
                 Here is the extracted data:
-                ${promptData.join("\n")}
-                
-                RULES:
-                1. Extract validity dates from metadata (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. CRITICAL (MERGING): If a class's text is split across multiple consecutive time blocks (e.g., Block 1: 10:00-11:00 "Sector Innov", Block 2: 11:00-12:00 "nnovation, Renewable Energy"), you MUST merge them into a single class.
-                   - The start time is the start time of the FIRST block (10:00).
-                   - The end time is the end time of the LAST block (12:00).
-                   - Add a space between words if necessary. If a word is split in half, join them directly without a space.
-                   - DO NOT add commas or periods.
-                3. CRITICAL (SEPARATE CLASSES): Do NOT merge separate classes. If Block 1 ends at 10:00 and Block 2 starts at 10:00 with a completely different subject, they are separate classes.
-                4. Separate the subject, professor, and section logically from the cleaned text.
+                ${gridText}
                 
                 Return a valid JSON object:
                 {
