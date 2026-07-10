@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF TEXT EXTRACTION + GROQ AI (SMART DEDUCTION) ======
+    // ====== PDF GRID RECONSTRUCTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Reading PDF...";
+        pdfStatus.innerText = "⏳ Reconstructing PDF grid...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -140,34 +140,62 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
-                let rawText = "";
+                let gridText = "";
+                let metadataText = "";
                 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
-                    textContent.items.forEach(item => { rawText += item.str + " "; });
-                    rawText += "\n";
+                    let rows = {};
+                    
+                    // 1. Group items by their Y coordinate to form visual rows
+                    textContent.items.forEach(item => {
+                        if (!item.str.trim()) return;
+                        let y = Math.round(item.transform[5] / 5) * 5; // Round to nearest 5 to group items in the same visual row
+                        if (!rows[y]) rows[y] = [];
+                        rows[y].push(item);
+                    });
+
+                    // 2. Sort rows from top to bottom (Y descending)
+                    let sortedYs = Object.keys(rows).map(Number).sort((a, b) => b - a);
+                    
+                    sortedYs.forEach(y => {
+                        // 3. Sort items in the same row by their X coordinate (left to right)
+                        rows[y].sort((a, b) => a.transform[4] - b.transform[4]);
+                        let rowStr = rows[y].map(item => item.str).join(" | ");
+                        
+                        // If the row doesn't contain a day or a time, it's metadata
+                        if (!rowStr.match(/(Lundi|Mardi|Mercredi|Jeudi|Vendredi|Samedi|\d{1,2}:\d{2})/)) {
+                            metadataText += rowStr + " ";
+                        } else {
+                            gridText += rowStr + "\n";
+                        }
+                    });
                 }
 
-                if (rawText.length === 0) throw new Error("Could not extract any text from this PDF.");
+                if (gridText.length === 0) throw new Error("Could not extract any text from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is deducing the schedule structure...";
+                pdfStatus.innerText = "⏳ AI is analyzing the structured grid...";
 
-                // 2. Send to Groq AI with Smart Deduction Prompt
-                const prompt = `You are an expert university schedule parser. Analyze the following raw text from a schedule PDF in French.
+                // 4. Send structured grid to Groq AI
+                const prompt = `You are an expert university schedule parser. I have extracted the schedule PDF and reconstructed the visual grid.
+                Columns are separated by " | ". The first row contains the days (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi).
+                The first column contains the timeline (08:00, 09:00, etc.).
+                The cells contain the classes (Subject, Professor, Section, Start Time, End Time).
                 
-                CRITICAL CONTEXT:
-                The PDF reader extracted the text column by column. This means all classes for Monday are listed first, then all classes for Tuesday, etc. 
-                However, the day names (Lundi, Mardi) are ONLY at the top of the text and are NOT repeated next to each class.
+                Metadata:
+                ${metadataText}
                 
-                YOUR TASK:
-                1. Deduce the day for each class. A new day begins when the time resets to an early morning hour (e.g., 08:30) after an afternoon class (e.g., 17:00).
-                2. There are 6 days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday.
-                3. Translate the days to English.
-                4. Extract the "Valable du" (from) and "au" (to) dates in YYYY-MM-DD format.
-                5. For each class, extract the exact start and end time (HH:MM), subject, professor, and section.
-                6. Merge split words (e.g., "program" and "mation" -> "programmation").
-                7. Do not invent classes. Only extract what is in the text.
+                Grid:
+                ${gridText}
+                
+                CRITICAL RULES:
+                1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                2. For each day, extract class sessions (start HH:MM, end HH:MM, subject, professor, section).
+                3. Translate days to English (Monday, Tuesday, Wednesday, Thursday, Friday, Saturday).
+                4. Merge split words (e.g., "program" and "mation" -> "programmation").
+                5. DO NOT include the timeline header (08:00, 09:00, etc.) as classes. A real class has a specific start and end time (e.g., 08:30 to 10:00).
+                6. DO NOT invent classes. Only extract what is visibly written in the grid.
                 
                 Return ONLY a valid JSON object:
                 {
@@ -175,10 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   "schedule": [
                     { "day": "Monday", "start": "HH:MM", "end": "HH:MM", "subject": "...", "professor": "...", "section": "..." }
                   ]
-                }
-                
-                Raw Text:
-                ${rawText}`;
+                }`;
 
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
@@ -208,13 +233,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     let aiText = data.choices[0].message.content;
                     const aiResult = JSON.parse(aiText);
                     
-                    // 3. Apply validity dates
+                    // 5. Apply validity dates
                     if (aiResult.validity) {
                         if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                         if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                     }
 
-                    // 4. Add to schedule
+                    // 6. Add to schedule
                     let addedCount = 0;
                     aiResult.schedule.forEach(cls => {
                         let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
