@@ -262,10 +262,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
                 5. CRITICAL (MERGING WRAPPED TEXT): The ONLY time you are allowed to merge two time slots is if the subject text is cut off mid-word or mid-sentence. 
-                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". 
-                   - In this case, merge them into ONE class: Start 08:00, End 10:00, Subject: "Sector Innov. (Materials Innovation, Renewable Energy)".
-                6. CRITICAL (DO NOT MERGE IDENTICAL CLASSES): If a subject text is COMPLETE, you must NEVER merge it with the next time slot, even if the next slot has the exact same subject name and professor. Output them as separate JSON entries.
-                   - Example: "Génie logiciel" at 08:30-10:00 and "Génie logiciel" at 10:00-11:30 MUST remain two separate classes.
+                   - When you merge slots, you MUST use the START time of the VERY FIRST slot in the sequence, and the END time of the VERY LAST slot in the sequence.
+                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". Slot 3 (10:00-11:00) has "BITRI Nabila". 
+                   - Merge them into ONE class: Start 08:00, End 11:00, Subject: "Sector Innov. (Materials Innovation, Renewable Energy)", Professor: "BITRI Nabila".
+                6. CRITICAL (DO NOT MERGE IDENTICAL CLASSES): If a subject text is COMPLETE, you must NEVER merge it with the next time slot, even if the next slot has the exact same subject name. Output them as separate JSON entries.
                 7. CRITICAL (EMPTY SLOTS): If the text after the pipe (|) is empty or contains no subject name, ignore it.
                 8. Do NOT invent classes. Do NOT deduplicate classes. 
                 
