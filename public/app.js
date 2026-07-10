@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF COORDINATE EXTRACTION + GROQ AI ======
+    // ====== PDF STRICT COLUMN EXTRACTION + GROQ AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting PDF coordinates...";
+        pdfStatus.innerText = "⏳ Isolating PDF columns...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -122,75 +122,146 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let gridText = "";
+                let finalPromptText = "";
+                let metadataText = "";
+
+                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    let items = textContent.items.map(item => ({
-                        str: item.str,
-                        x: Math.round(item.transform[4]),
-                        y: Math.round(item.transform[5]),
-                        height: item.height || 10
-                    }));
-
-                    // Sort by Y descending (top to bottom), then X ascending (left to right)
-                    items.sort((a, b) => {
-                        if (a.y !== b.y) return b.y - a.y;
-                        return a.x - b.x;
+                    // 1. Find Day Columns
+                    let dayHeaders = [];
+                    textContent.items.forEach(item => {
+                        let str = item.str.trim();
+                        for (let frDay in dayMap) {
+                            if (str.includes(frDay)) {
+                                if (!dayHeaders.find(d => d.frDay === frDay)) {
+                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4], y: item.transform[5] });
+                                }
+                            }
+                        }
                     });
 
-                    // Group into visual rows based on Y coordinates
+                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
+                    
+                    // Calculate column boundaries (strict midpoints between headers)
+                    let boundaries = [];
+                    for (let j = 0; j < dayHeaders.length; j++) {
+                        let startX = j === 0 ? -10000 : (dayHeaders[j-1].x + dayHeaders[j].x) / 2;
+                        let endX = j === dayHeaders.length - 1 ? 10000 : (dayHeaders[j].x + dayHeaders[j+1].x) / 2;
+                        boundaries.push({ start: startX, end: endX, day: dayHeaders[j].enDay });
+                    }
+
+                    let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
+
+                    // 2. Group items into Rows based on Y coordinates
                     let rows = [];
                     let currentY = null;
                     let currentRow = [];
                     
-                    items.forEach(item => {
-                        if (!item.str.trim()) return;
-                        let yThreshold = item.height * 0.5;
-                        
-                        if (currentY === null || Math.abs(item.y - currentY) > yThreshold) {
+                    let validItems = textContent.items.filter(item => item.str.trim() !== "");
+                    validItems.sort((a, b) => {
+                        let yA = a.transform[5];
+                        let yB = b.transform[5];
+                        if (Math.abs(yA - yB) > 5) return yB - yA; // Top to bottom
+                        return a.transform[4] - b.transform[4]; // Left to right
+                    });
+
+                    validItems.forEach(item => {
+                        let y = item.transform[5];
+                        let x = item.transform[4];
+                        let str = item.str.trim();
+
+                        // Skip headers and anything above them
+                        if (y >= headerY) return;
+
+                        if (currentY === null || Math.abs(y - currentY) > 5) {
                             if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
                             currentRow = [];
-                            currentY = item.y;
+                            currentY = y;
                         }
-                        currentRow.push({ x: item.x, str: item.str });
+                        currentRow.push({ x: x, str: str });
                     });
                     if (currentRow.length > 0) rows.push({ y: currentY, items: currentRow });
 
-                    gridText += `\n--- Page ${i} ---\n`;
+                    // 3. Process each row into its exact Day Column
+                    let dayData = {};
+                    dayHeaders.forEach(h => dayData[h.enDay] = []);
+                    
+                    let lastTimeStr = "";
+
                     rows.forEach(row => {
-                        row.items.sort((a, b) => a.x - b.x);
-                        let rowStr = `Y=${row.y}: `;
+                        let timeStr = "";
+                        let rowDayData = {};
+                        dayHeaders.forEach(h => rowDayData[h.enDay] = []);
+
                         row.items.forEach(item => {
-                            rowStr += `[x=${item.x}] "${item.str}" `;
+                            let assigned = false;
+                            
+                            // Check if it belongs to a day column
+                            for (let b of boundaries) {
+                                if (item.x >= b.start && item.x < b.end) {
+                                    rowDayData[b.day].push(item.str);
+                                    assigned = true;
+                                    break;
+                                }
+                            }
+                            
+                            // If not assigned to a day, it's either time or metadata
+                            if (!assigned) {
+                                if (dayHeaders.length > 0 && item.x < dayHeaders[0].x) {
+                                    if (item.str.match(/\d{1,2}:\d{2}/) || item.str.match(/\d{1,2}h\d{2}/)) {
+                                        timeStr += item.str + " ";
+                                    } else {
+                                        metadataText += item.str + " ";
+                                    }
+                                }
+                            }
                         });
-                        gridText += rowStr.trim() + "\n";
+
+                        timeStr = timeStr.trim();
+                        if (timeStr) {
+                            lastTimeStr = timeStr;
+                        } else {
+                            timeStr = lastTimeStr; // Carry over time if subject wraps to next line
+                        }
+
+                        for (let day in rowDayData) {
+                            if (rowDayData[day].length > 0) {
+                                dayData[day].push(`Time: ${timeStr} | ${rowDayData[day].join(" ")}`);
+                            }
+                        }
                     });
+
+                    // 4. Build clean string for AI
+                    for (let day in dayData) {
+                        if (dayData[day].length > 0) {
+                            finalPromptText += `\n<${day}>\n${dayData[day].join("\n")}\n</${day}>\n`;
+                        }
+                    }
                 }
 
-                if (gridText.trim().length === 0) throw new Error("Could not extract any text from this PDF.");
+                if (finalPromptText.trim().length === 0) throw new Error("Could not extract any schedule data from this PDF.");
 
-                pdfStatus.innerText = "⏳ AI is reconstructing the schedule from coordinates...";
+                pdfStatus.innerText = "⏳ AI is reading the isolated columns...";
 
-                let prompt = `You are an expert OCR and schedule parsing AI. I have extracted text fragments from a university schedule PDF along with their X (horizontal) and Y (vertical) coordinates. 
-                - X increases from left to right.
-                - Y increases from bottom to top.
-                - The schedule is a grid. Days (Lundi, Mardi, Mercredi, Jeudi, Vendredi, Samedi) are column headers. 
-                - Times (08:30, etc.) are on the far left.
-                - Class details are inside the grid cells.
+                let prompt = `You are a university schedule parser. I have extracted the schedule PDF and strictly separated the text into day columns using coordinate boundaries. 
                 
-                Your task:
-                1. Use the X coordinates to group texts into their respective Day columns. (Texts with similar X belong to the same column).
-                2. Use the Y coordinates to group texts into rows. (Texts with similar Y belong to the same time slot).
-                3. Reconstruct the classes. A class has a start time, end time, subject, professor, and section.
-                4. Extract the validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                5. Translate French days to English (Lundi -> Monday).
-                6. Ensure all times are strictly 24-hour format HH:MM.
+                Metadata:
+                ${metadataText}
                 
                 Here is the extracted data:
-                ${gridText}
+                ${finalPromptText}
+                
+                RULES:
+                1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
+                3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
+                4. Ensure all times are strictly 24-hour format HH:MM.
+                5. Do NOT invent classes. Only return classes present in the text.
+                6. Merge split words correctly.
                 
                 Return a valid JSON object:
                 {
