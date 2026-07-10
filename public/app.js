@@ -59,18 +59,34 @@ document.addEventListener('DOMContentLoaded', () => {
     loginBtn.addEventListener('click', async () => {
         const email = loginEmail.value;
         const password = loginPassword.value;
-        if(!email || !password) return loginError.innerText = "Please enter email and password", loginError.classList.remove('hidden');
+        if(!email || !password) {
+            loginError.innerText = "Please enter email and password";
+            loginError.classList.remove('hidden');
+            return;
+        }
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) { loginError.innerText = "Error: " + error.message; loginError.classList.remove('hidden'); } 
-        else { loginError.classList.add('hidden'); checkAuth(); }
+        if (error) { 
+            loginError.innerText = "Error: " + error.message; 
+            loginError.classList.remove('hidden'); 
+        } else { 
+            loginError.classList.add('hidden'); 
+            checkAuth(); 
+        }
     });
 
     logoutBtn.addEventListener('click', async () => { await supabase.auth.signOut(); checkAuth(); });
 
     async function checkAuth() {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session) { loginScreen.classList.add('hidden'); appScreen.classList.remove('hidden'); appScreen.classList.add('fade-in'); initApp(); } 
-        else { loginScreen.classList.remove('hidden'); appScreen.classList.add('hidden'); }
+        if (session) { 
+            loginScreen.classList.add('hidden'); 
+            appScreen.classList.remove('hidden'); 
+            appScreen.classList.add('fade-in'); 
+            initApp(); 
+        } else { 
+            loginScreen.classList.remove('hidden'); 
+            appScreen.classList.add('hidden'); 
+        }
     }
     checkAuth();
 
@@ -110,13 +126,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 let dayTexts = { "Monday": "", "Tuesday": "", "Wednesday": "", "Thursday": "", "Friday": "", "Saturday": "" };
                 let metadataText = "";
 
-                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday" };
+                // Support both French and English day headers just in case
+                const dayMap = { "Lundi": "Monday", "Mardi": "Tuesday", "Mercredi": "Wednesday", "Jeudi": "Thursday", "Vendredi": "Friday", "Samedi": "Saturday", "Monday": "Monday", "Tuesday": "Tuesday", "Wednesday": "Wednesday", "Thursday": "Thursday", "Friday": "Friday", "Saturday": "Saturday" };
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     
-                    // 1. Find X coordinates of day headers
                     let dayHeaders = [];
                     textContent.items.forEach(item => {
                         let str = item.str.trim();
@@ -129,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
 
-                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
+                    dayHeaders.sort((a, b) => a.x - b.x);
                     const minX = dayHeaders.length > 0 ? dayHeaders[0].x : 0;
 
                     let dayBuckets = {};
@@ -140,13 +156,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         let x = item.transform[4];
                         let y = item.transform[5];
                         
-                        // If X is far left, it's metadata/timeline
                         if (x < minX - 20) {
                             metadataText += item.str + " ";
                             return;
                         }
 
-                        // Find CLOSEST day column (Nearest Neighbor)
                         let closestDay = null;
                         let minDist = Infinity;
                         dayHeaders.forEach(d => {
@@ -162,7 +176,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
 
-                    // Sort items by Y (top to bottom) then X (left to right)
                     for (let enDay in dayBuckets) {
                         dayBuckets[enDay].sort((a, b) => {
                             if (Math.abs(a.y - b.y) > 5) return b.y - a.y; 
@@ -188,7 +201,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 pdfStatus.innerText = "⏳ AI is analyzing the separated columns...";
 
-                // 2. Construct AI Prompt with strict day delimiters
                 let prompt = `You are a university schedule parser. I have extracted the schedule PDF and separated the text by day using column coordinates.
                 
                 Metadata:
@@ -208,6 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 3. The classes are already inside their correct <day> block. DO NOT assign a class to a different day.
                 4. Merge split words (e.g., "program" and "mation" -> "programmation").
                 5. Ignore the timeline header (08:00, 09:00).
+                6. Ensure all times are strictly 24-hour format HH:MM (e.g., "08:30" not "8:30").
                 
                 Return a valid JSON object:
                 {
@@ -217,7 +230,6 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
-                // 3. Send to Groq AI
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: {
@@ -246,16 +258,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     let aiText = data.choices[0].message.content;
                     const aiResult = JSON.parse(aiText);
                     
-                    // 4. Apply validity dates
                     if (aiResult.validity) {
                         if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                         if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                     }
 
-                    // 5. Add to schedule
                     let addedCount = 0;
                     aiResult.schedule.forEach(cls => {
-                        let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
+                        // FIX: Trim day string to prevent errors from AI spacing
+                        let dayRaw = cls.day ? cls.day.trim() : "";
+                        let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
+                        
                         if (scheduleData.schedule[day]) {
                             scheduleData.schedule[day].push({
                                 start: cls.start,
@@ -295,15 +308,28 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         const options = {
             useSSL: true, userName: MQTT_USER, password: MQTT_PASS,
-            onSuccess: () => { isConnected = true; updateStatus("Online", "green"); mqttClient.subscribe("raspberry/data_response"); fetchDevices(); },
-            onFailure: (err) => { console.error("MQTT Failed:", err); updateStatus("Failed", "red"); fetchDevices(); }
+            onSuccess: () => { 
+                isConnected = true; 
+                updateStatus("Online", "green"); 
+                mqttClient.subscribe("raspberry/data_response"); 
+                fetchDevices(); 
+            },
+            onFailure: (err) => { 
+                console.error("MQTT Failed:", err); 
+                isConnected = false;
+                updateStatus("Offline", "red"); 
+                fetchDevices(); // Load fallback devices
+            }
         };
         mqttClient.connect(options);
     }
 
     function updateStatus(text, color) {
         const el = document.getElementById('connectionStatus');
-        if(el) el.className = `px-3 py-1 rounded-full text-xs font-medium text-white ${color === 'green' ? 'bg-green-500' : color === 'red' ? 'bg-red-500' : 'bg-gray-500'}`;
+        if(el) {
+            el.innerText = text;
+            el.className = `px-3 py-1 rounded-full text-xs font-medium text-white ${color === 'green' ? 'bg-green-500' : color === 'red' ? 'bg-red-500' : 'bg-gray-500'}`;
+        }
     }
 
     function updateDeviceListUI(devices) {
@@ -312,10 +338,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
                 { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
             ];
-            deviceList.innerHTML = fallbackDevices.map(d => `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200"><strong>${d.module_id}</strong></div>`).join('');
+            deviceList.innerHTML = fallbackDevices.map(d => `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200"><strong>${d.module_id}</strong><br><small class="text-gray-500">Fallback Device (MQTT Offline)</small></div>`).join('');
             deviceSelect.innerHTML = '<option value="">-- Select --</option>' + fallbackDevices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name}</option>`).join('');
             return;
         }
+        deviceList.innerHTML = devices.map(d => `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200"><strong>${d.module_id}</strong></div>`).join('');
         deviceSelect.innerHTML = '<option value="">-- Select Target Devices --</option>' + devices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name || d.module_id}</option>`).join('');
     }
 
@@ -324,11 +351,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
             message.destinationName = "raspberry/data_request";
             mqttClient.send(message);
-            setTimeout(() => { if (!deviceSelect.options.length > 1) updateDeviceListUI([]); }, 3000);
-        } else { updateDeviceListUI([]); }
+            // FIX: Corrected logical operator precedence
+            setTimeout(() => { 
+                if (deviceSelect.options.length <= 1) updateDeviceListUI([]); 
+            }, 3000);
+        } else { 
+            updateDeviceListUI([]); 
+        }
     }
 
-    function timeToMinutes(timeStr) { const [h, m] = timeStr.split(':').map(Number); return h * 60 + m; }
+    function timeToMinutes(timeStr) { 
+        if (!timeStr) return 0;
+        const [h, m] = timeStr.split(':').map(Number); 
+        return h * 60 + m; 
+    }
+    
     window.deleteSlot = (day, index) => { scheduleData.schedule[day].splice(index, 1); renderPreview(); updateSendButton(); };
 
     addSlotBtn.addEventListener('click', () => {
@@ -376,10 +413,25 @@ document.addEventListener('DOMContentLoaded', () => {
         scheduleData.validity.to = validTo.value;
 
         try {
-            await supabase.from('schedules').upsert({ classroom_id: scheduleData.classroom, validity: scheduleData.validity, schedule_data: scheduleData.schedule });
+            // Save to Supabase
+            const { error: supabaseError } = await supabase.from('schedules').upsert({ 
+                classroom_id: scheduleData.classroom, 
+                validity: scheduleData.validity, 
+                schedule_data: scheduleData.schedule 
+            });
+            
+            if (supabaseError) throw new Error(`Database Error: ${supabaseError.message}`);
+
+            // Check MQTT Connection before attempting to send
+            if (!isConnected) {
+                alert("⚠️ Schedule saved to database, but MQTT is disconnected. Cannot send to physical devices.");
+                return;
+            }
+
             for (const opt of selectedOptions) {
                 const type = opt.getAttribute('data-type'); 
                 let finalPayload = {}, topic = "";
+                
                 if (type === 'pi') {
                     topic = "classroom/111/schedule"; 
                     finalPayload = { classroom: scheduleData.classroom, validity: scheduleData.validity, schedule: scheduleData.schedule };
@@ -387,16 +439,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     const espDays = {};
                     Object.keys(scheduleData.schedule).forEach(day => {
                         espDays[day] = { events: {} };
-                        scheduleData.schedule[day].forEach((slot, index) => { espDays[day].events[(index + 1).toString()] = { startdate: slot.start, enddate: slot.end }; });
+                        scheduleData.schedule[day].forEach((slot, index) => { 
+                            espDays[day].events[(index + 1).toString()] = { 
+                                startdate: slot.start, 
+                                enddate: slot.end 
+                            }; 
+                        });
                     });
-                    finalPayload = { command: "$SOMS", network: opt.getAttribute('data-network'), NBM: opt.getAttribute('data-nbm'), module_id: opt.value, scheduleData: { days: espDays } };
+                    finalPayload = { 
+                        command: "$SOMS", 
+                        network: opt.getAttribute('data-network'), 
+                        NBM: opt.getAttribute('data-nbm'), 
+                        module_id: opt.value, 
+                        scheduleData: { days: espDays } 
+                    };
                     topic = "esp32-in/command";
                 } 
+                
                 const message = new Paho.MQTT.Message(JSON.stringify(finalPayload));
                 message.destinationName = topic;
                 mqttClient.send(message);
             }
-            alert("Success! Schedule sent.");
-        } catch (e) { alert('Error sending schedule.'); } 
+            alert("✅ Success! Schedule saved and sent to devices.");
+        } catch (e) {
+            console.error("Send Error:", e);
+            alert(`❌ Error sending schedule: ${e.message}`); 
+        } 
     });
 });
