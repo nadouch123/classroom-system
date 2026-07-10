@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-       // ====== PDF IMAGE EXTRACTION + GEMINI VISION AI ======
+          // ====== PDF IMAGE EXTRACTION + GEMINI VISION AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -104,9 +104,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 1. Render PDF page to an Image (Canvas)
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
-                const page = await pdf.getPage(1); // Get first page
+                const page = await pdf.getPage(1);
                 
-                const viewport = page.getViewport({ scale: 2.0 }); // High resolution for AI
+                const viewport = page.getViewport({ scale: 2.0 });
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.width = viewport.width;
@@ -115,20 +115,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 await page.render({ canvasContext: context, viewport: viewport }).promise;
                 const imgDataUrl = canvas.toDataURL('image/png');
 
-                pdfStatus.innerText = "⏳ Opening AI login window... (Please allow pop-ups)";
-
-                // 2. Force Puter Login if not already logged in
                 if (typeof puter === 'undefined') {
                     throw new Error("Puter.js is not loaded! Check index.html.");
                 }
 
-                if (!puter.auth.isSignedIn()) {
-                    await puter.auth.signIn(); // This forces the popup to appear
-                }
+                pdfStatus.innerText = "⏳ AI is reading the image... (Please wait 15s)";
 
-                pdfStatus.innerText = "⏳ AI is reading the image... (Please wait 15 seconds)";
-
-                // 3. Send Image to Gemini AI via Puter.js
+                // 2. Send Image to Gemini 2.0 Flash via Puter.js
                 const prompt = `You are an expert university schedule parser. Analyze the provided image of a schedule PDF (it is in French).
                 
                 CRITICAL INSTRUCTIONS:
@@ -146,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
-                const response = await puter.ai.chat(prompt, imgDataUrl, { model: "gemini-1.5-flash" });
+                const response = await puter.ai.chat(prompt, imgDataUrl, { model: "gemini-2.0-flash" });
                 
                 let aiText = "";
                 if (typeof response === 'string') aiText = response;
@@ -154,21 +147,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 else if (response?.text) aiText = response.text;
                 else aiText = JSON.stringify(response);
 
-                // Clean up markdown if present
                 aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
                 const jsonStart = aiText.indexOf('{');
                 const jsonEnd = aiText.lastIndexOf('}');
-                if (jsonStart === -1 || jsonEnd === -1) throw new Error("AI did not return valid JSON.");
+                
+                if (jsonStart === -1 || jsonEnd === -1) {
+                    throw new Error("AI did not return valid JSON. Response was: " + aiText.substring(0, 100));
+                }
 
                 const aiResult = JSON.parse(aiText.substring(jsonStart, jsonEnd + 1));
                 
-                // 4. Apply validity dates
+                // 3. Apply validity dates
                 if (aiResult.validity) {
                     if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                     if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                 }
 
-                // 5. Add to schedule
+                // 4. Add to schedule
                 let addedCount = 0;
                 aiResult.schedule.forEach(cls => {
                     let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
@@ -191,7 +186,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error("AI Vision Error:", e);
                 pdfStatus.classList.remove('text-indigo-800');
                 pdfStatus.classList.add('text-red-600');
-                pdfStatus.innerText = `❌ Error: ${e.message}`;
+                // Display the exact error message
+                let errMsg = e?.message || e?.error?.message || JSON.stringify(e);
+                pdfStatus.innerText = `❌ Error: ${errMsg}`;
             } finally {
                 parsePdfBtn.disabled = false;
             }
