@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF IMAGE EXTRACTION + GEMINI VISION AI ======
+       // ====== PDF IMAGE EXTRACTION + GEMINI VISION AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -115,9 +115,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 await page.render({ canvasContext: context, viewport: viewport }).promise;
                 const imgDataUrl = canvas.toDataURL('image/png');
 
+                pdfStatus.innerText = "⏳ Opening AI login window... (Please allow pop-ups)";
+
+                // 2. Force Puter Login if not already logged in
+                if (typeof puter === 'undefined') {
+                    throw new Error("Puter.js is not loaded! Check index.html.");
+                }
+
+                if (!puter.auth.isSignedIn()) {
+                    await puter.auth.signIn(); // This forces the popup to appear
+                }
+
                 pdfStatus.innerText = "⏳ AI is reading the image... (Please wait 15 seconds)";
 
-                // 2. Send Image to Gemini AI via Puter.js
+                // 3. Send Image to Gemini AI via Puter.js
                 const prompt = `You are an expert university schedule parser. Analyze the provided image of a schedule PDF (it is in French).
                 
                 CRITICAL INSTRUCTIONS:
@@ -151,13 +162,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const aiResult = JSON.parse(aiText.substring(jsonStart, jsonEnd + 1));
                 
-                // 3. Apply validity dates
+                // 4. Apply validity dates
                 if (aiResult.validity) {
                     if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
                     if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                 }
 
-                // 4. Add to schedule
+                // 5. Add to schedule
                 let addedCount = 0;
                 aiResult.schedule.forEach(cls => {
                     let day = cls.day.charAt(0).toUpperCase() + cls.day.slice(1).toLowerCase();
@@ -186,7 +197,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
     });
-
     // ====== MQTT CONNECTION & UI LOGIC ======
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
