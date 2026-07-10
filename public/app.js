@@ -260,8 +260,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. Do NOT invent classes. Only return classes present in the text.
-                6. Merge split words correctly.
+                5. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
+                6. Do NOT invent classes. Only return classes explicitly present in the text.
+                7. Merge split words correctly.
                 
                 Return a valid JSON object:
                 {
@@ -309,11 +310,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         let dayRaw = cls.day ? cls.day.trim() : "";
                         let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
                         
-                        if (scheduleData.schedule[day]) {
+                        // FIX: Only add if subject exists and is not empty
+                        if (scheduleData.schedule[day] && cls.subject && cls.subject.trim() !== "") {
                             scheduleData.schedule[day].push({
                                 start: cls.start,
                                 end: cls.end,
-                                subject: cls.subject || "General",
+                                subject: cls.subject,
                                 professor: cls.professor || "",
                                 section: cls.section || ""
                             });
