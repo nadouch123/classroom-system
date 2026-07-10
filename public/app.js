@@ -261,13 +261,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL (OVERFLOW TEXT): Sometimes a cell's text overflows into subsequent time slots because it is too long.
-                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". Slot 3 (10:00-11:00) has "BITRI Nabila M-Innov2".
-                   - You MUST merge these into ONE class: Start time 08:00, End time 11:00. Subject: "Sector Innov. (Materials Innovation, Renewable Energy)", Professor: "BITRI Nabila", Section: "M-Innov2".
-                   - Do NOT output Slot 2 or Slot 3 as separate classes if they are just continuations.
-                6. CRITICAL (SEPARATE CLASSES): If a subject is complete and appears in consecutive time slots (e.g., "Génie logiciel" at 08:30 and "Génie logiciel" at 11:30), DO NOT merge them. Keep them as separate classes.
-                7. CRITICAL (EMPTY SLOTS): If the text after the pipe (|) is empty, ignore it.
-                8. Do NOT invent classes. Do NOT deduplicate classes. If the same class appears at different times, output both.
+                5. CRITICAL (MERGING WRAPPED TEXT): The ONLY time you are allowed to merge two time slots is if the subject text is cut off mid-word or mid-sentence. 
+                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". 
+                   - In this case, merge them into ONE class: Start 08:00, End 10:00, Subject: "Sector Innov. (Materials Innovation, Renewable Energy)".
+                6. CRITICAL (DO NOT MERGE IDENTICAL CLASSES): If a subject text is COMPLETE, you must NEVER merge it with the next time slot, even if the next slot has the exact same subject name and professor. Output them as separate JSON entries.
+                   - Example: "Génie logiciel" at 08:30-10:00 and "Génie logiciel" at 10:00-11:30 MUST remain two separate classes.
+                7. CRITICAL (EMPTY SLOTS): If the text after the pipe (|) is empty or contains no subject name, ignore it.
+                8. Do NOT invent classes. Do NOT deduplicate classes. 
                 
                 Return a valid JSON object:
                 {
