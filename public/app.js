@@ -264,15 +264,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
+                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times. If multiple times are listed, use the first as start and last as end.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL (MERGING): If a subject is split across consecutive time slots (e.g., "Sector Innov" at 08:00-09:00, "Innovation" at 09:00-10:00), you MUST MERGE them into a single class. 
-                   - Combine the subject strings perfectly (e.g., "Sector Innov. (Materials Innovation, Renewable Energy").
-                   - Use the START time of the first slot (08:00) and the END time of the last slot (11:00).
-                   - Use the professor and section from whichever slot contains them.
-                6. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
-                7. Do NOT invent classes. Only return classes explicitly present in the text.
+                5. CRITICAL (MERGING WRAPPED TEXT): If a subject text is cut off mid-word/mid-sentence and continues in the next time slot (e.g., "Sector Innov. (Materials I" at 08:00, and "nnovation, Renewable" at 09:00, and "ergy" at 10:00), you MUST MERGE them into a single class. Combine the text perfectly, use the earliest start time (08:00) and the latest end time (10:00).
+                6. CRITICAL (SEPARATE CLASSES): If a subject is complete but appears in consecutive time slots with DIFFERENT sections (e.g., "Génie logiciel | 2AINFO2" at 08:30, and "Génie logiciel | 2AINFO1" at 11:30), DO NOT merge them. They are separate classes.
+                7. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
+                8. Merge split words correctly (e.g., "program" and "mation" -> "programmation").
                 
                 Return a valid JSON object:
                 {
