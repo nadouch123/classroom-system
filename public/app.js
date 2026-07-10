@@ -238,7 +238,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. CRITICAL (MERGING TEXT): If a class's text is split across multiple lines, merge them into a single string. Concatenate them directly WITHOUT adding any commas, periods, or extra spaces. (e.g., "program" and "mation" becomes "programmation", NOT "program, mation").
+                2. CRITICAL (MERGING TEXT): If a class's text is split across multiple lines, merge them into a single string. 
+                   - Add a space between words if necessary (e.g., "Sector" and "Innov" becomes "Sector Innov").
+                   - If a word is split in half (e.g., "program" and "mation"), join them directly WITHOUT a space ("programmation").
+                   - DO NOT add any commas or periods when merging.
                 3. CRITICAL (TIMES): Determine the start and end times using the Y coordinates and the Timeline rules above. Ensure times are HH:MM.
                 4. If multiple classes exist in the same day, keep them separate. Do NOT merge them if they are in different time blocks.
                 5. If a cell is empty, ignore it.
