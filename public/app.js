@@ -230,14 +230,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 let cellText = rowDayData[day].join(" ").trim();
                                 if (cellText === "") continue;
 
-                                // FIX: If no time is present, it's a wrapped line from the cell above. Append it!
-                                if (!hasNewTime && dayData[day].length > 0) {
-                                    let lastIdx = dayData[day].length - 1;
-                                    dayData[day][lastIdx] += " " + cellText;
-                                } else {
-                                    let displayTime = hasNewTime ? timeStr : (lastTimeStr || "N/A");
-                                    dayData[day].push(`Time: ${displayTime} | ${cellText}`);
-                                }
+                                let displayTime = hasNewTime ? timeStr : (lastTimeStr || "N/A");
+                                dayData[day].push(`Time: ${displayTime} | ${cellText}`);
                             }
                         }
                     });
@@ -264,13 +258,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 RULES:
                 1. Extract validity dates (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times. If multiple times are listed, use the first as start and last as end.
+                2. For each <day> block, extract class sessions. The "Time: HH:MM HH:MM" field contains the start and end times.
                 3. The text after the pipe (|) contains the subject, professor, and section. Separate them logically.
                 4. Ensure all times are strictly 24-hour format HH:MM.
-                5. CRITICAL (MERGING WRAPPED TEXT): If a subject text is cut off mid-word/mid-sentence and continues in the next time slot (e.g., "Sector Innov. (Materials I" at 08:00, and "nnovation, Renewable" at 09:00, and "ergy" at 10:00), you MUST MERGE them into a single class. Combine the text perfectly, use the earliest start time (08:00) and the latest end time (10:00).
-                6. CRITICAL (SEPARATE CLASSES): If a subject is complete but appears in consecutive time slots with DIFFERENT sections (e.g., "Génie logiciel | 2AINFO2" at 08:30, and "Génie logiciel | 2AINFO1" at 11:30), DO NOT merge them. They are separate classes.
-                7. CRITICAL: If the text after the pipe (|) is empty or does not contain a real subject name, IGNORE that time slot. Do NOT output empty classes.
-                8. Merge split words correctly (e.g., "program" and "mation" -> "programmation").
+                5. CRITICAL (OVERFLOW TEXT): Sometimes a cell's text overflows into subsequent time slots because it is too long.
+                   - Example: Slot 1 (08:00-09:00) has "Sector Innov. (Materials I". Slot 2 (09:00-10:00) has "nnovation, Renewable Energy)". Slot 3 (10:00-11:00) has "BITRI Nabila M-Innov2".
+                   - You MUST merge these into ONE class: Start time 08:00, End time 11:00. Subject: "Sector Innov. (Materials Innovation, Renewable Energy)", Professor: "BITRI Nabila", Section: "M-Innov2".
+                   - Do NOT output Slot 2 or Slot 3 as separate classes if they are just continuations.
+                6. CRITICAL (SEPARATE CLASSES): If a subject is complete and appears in consecutive time slots (e.g., "Génie logiciel" at 08:30 and "Génie logiciel" at 11:30), DO NOT merge them. Keep them as separate classes.
+                7. CRITICAL (EMPTY SLOTS): If the text after the pipe (|) is empty, ignore it.
+                8. Do NOT invent classes. Do NOT deduplicate classes. If the same class appears at different times, output both.
                 
                 Return a valid JSON object:
                 {
