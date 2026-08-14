@@ -9,7 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    const GROQ_API_KEY = "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";
+    // PASTE YOUR GOOGLE GEMINI API KEY HERE
+    const GOOGLE_API_KEY = "AQ.Ab8RN6L4bU_O7Zpyvxpoytph5IZgFWOKb2zE3ynDKFyXvzW2AA";
     
     let mqttClient;
     let isConnected = false;
@@ -100,48 +101,24 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF TO IMAGE + LLAMA-4 VISION (via Groq) ======
-    if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    }
-
+    // ====== GOOGLE GEMINI NATIVE PDF EXTRACTION ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Converting PDF to images...";
+        pdfStatus.innerText = "⏳ AI is reading the PDF...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
-        reader.readAsArrayBuffer(file);
+        reader.readAsDataURL(file);
         
         reader.onload = async () => {
             try {
-                const typedArray = new Uint8Array(reader.result);
-                const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
-                
-                let imagesBase64 = [];
+                const base64PDF = reader.result.split(',')[1];
 
-                // Convert each PDF page to a high-quality image
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 2 }); 
-                    const canvas = document.createElement('canvas');
-                    const context = canvas.getContext('2d');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-
-                    await page.render({ canvasContext: context, viewport: viewport }).promise;
-                    imagesBase64.push(canvas.toDataURL('image/png'));
-                }
-
-                if (imagesBase64.length === 0) throw new Error("Could not convert PDF to images.");
-
-                pdfStatus.innerText = "⏳ AI is visually reading the schedule...";
-
-                let prompt = `You are an expert schedule parser AI. I have attached images of a university schedule PDF.
+                let prompt = `You are an expert schedule parser AI. I have attached a university schedule PDF.
                 The schedule is a visual grid. Days (Monday to Saturday) are columns. Times (08:00, 09:00, etc.) are rows on the far left.
                 Classes are inside grey/colored squares. 
                 
@@ -154,7 +131,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 6. Do NOT invent classes. Only extract what you see in the squares.
                 7. Ensure all times are strictly 24-hour format HH:MM.
                 8. Translate French days to English (Lundi -> Monday).
-                9. Respond ONLY with a valid JSON object. No markdown, no explanations.
                 
                 Return a valid JSON object:
                 {
@@ -164,24 +140,22 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
-                // Build the messages array with images
-                let contentArray = [{ type: "text", text: prompt }];
-                imagesBase64.forEach(img => {
-                    contentArray.push({ type: "image_url", image_url: { url: img } });
-                });
-
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GOOGLE_API_KEY}`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${GROQ_API_KEY}`
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        model: "meta-llama/llama-4-scout-17b-16b-instruct",
-                        messages: [
-                            { role: "user", content: contentArray }
-                        ],
-                        temperature: 0.1
+                        contents: [{
+                            parts: [
+                                { text: prompt },
+                                { inline_data: { mime_type: "application/pdf", data: base64PDF } }
+                            ]
+                        }],
+                        generationConfig: {
+                            temperature: 0.1,
+                            response_mime_type: "application/json"
+                        }
                     })
                 });
 
@@ -191,41 +165,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const data = await response.json();
+                let aiText = data.candidates[0].content.parts[0].text;
                 
-                if (data.choices && data.choices.length > 0) {
-                    let aiText = data.choices[0].message.content;
-                    // Clean up markdown if the AI adds it despite instructions
-                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
-                    const aiResult = JSON.parse(aiText);
-                    
-                    if (aiResult.validity) {
-                        if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
-                        if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
-                    }
-
-                    let addedCount = 0;
-                    aiResult.schedule.forEach(cls => {
-                        let dayRaw = cls.day ? cls.day.trim() : "";
-                        let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
-                        
-                        if (scheduleData.schedule[day] && cls.subject && cls.subject.trim() !== "") {
-                            scheduleData.schedule[day].push({
-                                start: cls.start,
-                                end: cls.end,
-                                subject: cls.subject,
-                                professor: cls.professor || "",
-                                section: cls.section || ""
-                            });
-                            addedCount++;
-                        }
-                    });
-
-                    Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-                    renderPreview(); updateSendButton();
-                    pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
-                } else {
-                    throw new Error("AI returned no data.");
+                const aiResult = JSON.parse(aiText);
+                
+                if (aiResult.validity) {
+                    if (aiResult.validity.from) validFrom.value = convertDateFormat(aiResult.validity.from);
+                    if (aiResult.validity.to) validTo.value = convertDateFormat(aiResult.validity.to);
                 }
+
+                let addedCount = 0;
+                aiResult.schedule.forEach(cls => {
+                    let dayRaw = cls.day ? cls.day.trim() : "";
+                    let day = dayRaw.charAt(0).toUpperCase() + dayRaw.slice(1).toLowerCase();
+                    
+                    if (scheduleData.schedule[day] && cls.subject && cls.subject.trim() !== "") {
+                        scheduleData.schedule[day].push({
+                            start: cls.start,
+                            end: cls.end,
+                            subject: cls.subject,
+                            professor: cls.professor || "",
+                            section: cls.section || ""
+                        });
+                        addedCount++;
+                    }
+                });
+
+                Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
+                renderPreview(); updateSendButton();
+                pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
+                
             } catch (e) {
                 console.error("AI Extraction Error:", e);
                 pdfStatus.classList.remove('text-indigo-800');
