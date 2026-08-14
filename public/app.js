@@ -9,7 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    const GROQ_API_KEY = "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";
+    // PASTE YOUR OPENROUTER API KEY HERE
+    const OPENROUTER_API_KEY = "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";
     
     let mqttClient;
     let isConnected = false;
@@ -100,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF SMART Y-COORDINATE CLUSTERING + GROQ AI ======
+    // ====== PDF TO IMAGE + GOOGLE GEMINI (via OpenRouter) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -111,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         pdfStatus.classList.remove('hidden', 'text-red-600');
         pdfStatus.classList.add('text-indigo-800');
-        pdfStatus.innerText = "⏳ Extracting spatial coordinates...";
+        pdfStatus.innerText = "⏳ Converting PDF to images...";
         parsePdfBtn.disabled = true;
 
         const reader = new FileReader();
@@ -122,176 +123,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 const typedArray = new Uint8Array(reader.result);
                 const pdf = await window.pdfjsLib.getDocument(typedArray).promise;
                 
-                let promptData = [];
-                let metadataText = "";
+                let imagesBase64 = [];
 
-                const dayMap = { "lundi": "Monday", "mardi": "Tuesday", "mercredi": "Wednesday", "jeudi": "Thursday", "vendredi": "Friday", "samedi": "Saturday", "dimanche": "Sunday" };
-
+                // Convert each PDF page to a high-quality image
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    
-                    // 1. Find Day Columns (Case Insensitive)
-                    let dayHeaders = [];
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim().toLowerCase();
-                        for (let frDay in dayMap) {
-                            if (str.includes(frDay)) {
-                                if (!dayHeaders.find(d => d.frDay === frDay)) {
-                                    dayHeaders.push({ frDay: frDay, enDay: dayMap[frDay], x: item.transform[4], y: item.transform[5] });
-                                }
-                            }
-                        }
-                    });
+                    const viewport = page.getViewport({ scale: 2 }); 
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
 
-                    dayHeaders.sort((a, b) => a.x - b.x); // Sort left to right
-                    
-                    // Calculate column boundaries
-                    let boundaries = [];
-                    for (let j = 0; j < dayHeaders.length; j++) {
-                        let startX = j === 0 ? -10000 : (dayHeaders[j-1].x + dayHeaders[j].x) / 2;
-                        let endX = j === dayHeaders.length - 1 ? 10000 : (dayHeaders[j].x + dayHeaders[j+1].x) / 2;
-                        boundaries.push({ start: startX, end: endX, day: dayHeaders[j].enDay });
-                    }
-
-                    let headerY = dayHeaders.length > 0 ? Math.max(...dayHeaders.map(h => h.y)) : 0;
-
-                    // 2. Extract Timeline (Exact Y coordinates of times)
-                    let timeline = [];
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        let x = item.transform[4];
-                        let y = item.transform[5];
-                        
-                        if (dayHeaders.length > 0 && x < dayHeaders[0].x) {
-                            if (str.match(/\d{1,2}:\d{2}/) || str.match(/\d{1,2}h\d{2}/)) {
-                                let cleanTime = str.replace('h', ':').trim();
-                                if (!timeline.find(t => t.time === cleanTime && t.y === y)) {
-                                    timeline.push({ y: y, time: cleanTime });
-                                }
-                            } else {
-                                metadataText += str + " ";
-                            }
-                        }
-                    });
-                    timeline.sort((a, b) => b.y - a.y); // Sort top to bottom (highest Y first)
-
-                    // 3. Collect text items for each day column
-                    let dayItems = {};
-                    dayHeaders.forEach(h => dayItems[h.enDay] = []);
-                    
-                    textContent.items.forEach(item => {
-                        let str = item.str.trim();
-                        if (!str) return;
-                        let x = item.transform[4];
-                        let y = item.transform[5];
-                        if (y >= headerY) return; // Skip headers
-                        
-                        for (let b of boundaries) {
-                            if (x >= b.start && x < b.end) {
-                                dayItems[b.day].push({ y: y, str: str, height: item.height || 10 });
-                                break;
-                            }
-                        }
-                    });
-
-                    // Sort items by Y descending (top to bottom)
-                    for (let day in dayItems) {
-                        dayItems[day].sort((a, b) => b.y - a.y);
-                    }
-
-                    // 4. Cluster text into blocks based on Y proximity
-                    let dayClasses = [];
-                    
-                    for (let day in dayItems) {
-                        let currentBlock = null;
-                        let lastY = null;
-                        
-                        dayItems[day].forEach(item => {
-                            let yThreshold = Math.max(item.height * 1.5, 15);
-                            
-                            if (currentBlock !== null && Math.abs(lastY - item.y) <= yThreshold) {
-                                currentBlock.text += " " + item.str;
-                                currentBlock.lastY = item.y;
-                            } else {
-                                if (currentBlock) dayClasses.push({ day: day, firstY: currentBlock.firstY, lastY: currentBlock.lastY, text: currentBlock.text });
-                                currentBlock = { firstY: item.y, lastY: item.y, text: item.str };
-                            }
-                            lastY = item.y;
-                        });
-                        if (currentBlock) dayClasses.push({ day: day, firstY: currentBlock.firstY, lastY: currentBlock.lastY, text: currentBlock.text });
-                    }
-
-                    // 5. Find exact Start and End times for each cluster
-                    function findStartTime(y) {
-                        let start = null;
-                        for (let i = 0; i < timeline.length; i++) {
-                            if (timeline[i].y >= y) {
-                                start = timeline[i].time;
-                            } else {
-                                break;
-                            }
-                        }
-                        return start;
-                    }
-                    
-                    function findEndTime(y) {
-                        let end = null;
-                        for (let i = 0; i < timeline.length; i++) {
-                            if (timeline[i].y >= y) {
-                                continue;
-                            } else {
-                                end = timeline[i].time;
-                                break;
-                            }
-                        }
-                        return end;
-                    }
-
-                    dayClasses.forEach(cls => {
-                        if (cls.text.trim() !== "") {
-                            let start = findStartTime(cls.firstY);
-                            let end = findEndTime(cls.lastY);
-                            if (start && end) {
-                                promptData.push(`Day: ${cls.day} | Start: ${start} | End: ${end} | Text: ${cls.text.trim()}`);
-                            }
-                        }
-                    });
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+                    imagesBase64.push(canvas.toDataURL('image/png'));
                 }
 
-                if (promptData.length === 0) {
-                    // Fallback if structure is completely different
-                    let rawText = "";
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        textContent.items.forEach(item => { if(item.str.trim()) rawText += item.str + " "; });
-                    }
-                    if (rawText.trim().length === 0) throw new Error("Could not extract any schedule data from this PDF.");
-                    promptData.push(`Raw Text: ${rawText}`);
-                }
+                if (imagesBase64.length === 0) throw new Error("Could not convert PDF to images.");
 
-                pdfStatus.innerText = "⏳ AI is organizing classes...";
+                pdfStatus.innerText = "⏳ AI is visually reading the schedule...";
 
-                let prompt = `You are a university schedule parser. I have extracted classes from a PDF schedule using exact coordinate mapping.
-                Each line contains a Day, an exact Start time, an exact End time, and a raw Text string.
-                The raw text contains the subject, professor, and section, but it may have weird spacing because text was wrapped in the PDF.
-                
-                Metadata:
-                ${metadataText}
-                
-                Here is the extracted data:
-                ${promptData.join("\n")}
+                let prompt = `You are an expert schedule parser AI. I have attached images of a university schedule PDF.
+                The schedule is a visual grid. Days (Monday to Saturday) are columns. Times (08:00, 09:00, etc.) are rows on the far left.
+                Classes are inside grey/colored squares. 
                 
                 RULES:
-                1. Extract validity dates from metadata (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
-                2. CRITICAL: The Start and End times are already correct. Do NOT change them. Just copy them exactly.
-                3. CRITICAL: Clean up the "Text" field. 
-                   - If a word is split in half (e.g., "I nnovation"), join it correctly ("Innovation").
-                   - Add a space between words if necessary.
-                   - DO NOT add any commas or periods.
-                4. Separate the subject, professor, and section logically from the cleaned text.
-                5. Output each class as a separate JSON entry. Do NOT merge classes. Do NOT invent classes.
+                1. Look at the visual grid carefully. Read the text inside the squares.
+                2. Extract validity dates from the metadata (Valable du... au...). Convert DD/MM/YYYY to YYYY-MM-DD.
+                3. For each class, extract the day, exact start time, exact end time, subject, professor, and section.
+                4. If a class square spans multiple time rows (e.g., from 17:30 to 20:00), use the earliest start time and the latest end time.
+                5. If text wraps inside a square, merge it into a single subject string without adding commas.
+                6. Do NOT invent classes. Only extract what you see in the squares.
+                7. Ensure all times are strictly 24-hour format HH:MM.
+                8. Translate French days to English (Lundi -> Monday).
                 
                 Return a valid JSON object:
                 {
@@ -301,17 +164,22 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                // Build the messages array with images
+                let contentArray = [{ type: "text", text: prompt }];
+                imagesBase64.forEach(img => {
+                    contentArray.push({ type: "image_url", image_url: { url: img } });
+                });
+
+                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${GROQ_API_KEY}`
+                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`
                     },
                     body: JSON.stringify({
-                        model: "llama-3.3-70b-versatile",
+                        model: "google/gemini-flash-1.5:free",
                         messages: [
-                            { role: "system", content: "You are a JSON API. Respond ONLY with a valid JSON object. No markdown, no explanations." },
-                            { role: "user", content: prompt }
+                            { role: "user", content: contentArray }
                         ],
                         temperature: 0.1,
                         response_format: { type: "json_object" }
@@ -327,6 +195,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (data.choices && data.choices.length > 0) {
                     let aiText = data.choices[0].message.content;
+                    // Clean up markdown if the AI adds it despite instructions
+                    aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
                     const aiResult = JSON.parse(aiText);
                     
                     if (aiResult.validity) {
