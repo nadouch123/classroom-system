@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== GOOGLE GEMINI 2.5 FLASH NATIVE PDF EXTRACTION ======
+    // ====== GOOGLE GEMINI 3.5 FLASH NATIVE PDF EXTRACTION ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
         if (!file) return alert("Please select a PDF file first.");
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   ]
                 }`;
 
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`, {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GOOGLE_API_KEY}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
