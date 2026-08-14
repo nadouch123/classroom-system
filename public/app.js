@@ -210,17 +210,39 @@ document.addEventListener('DOMContentLoaded', () => {
     function connectMQTT() {
         mqttClient = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, "web-client-" + Math.random().toString(16).substr(2, 8));
         mqttClient.onConnectionLost = () => { isConnected = false; updateStatus("Disconnected", "red"); };
+        
         mqttClient.onMessageArrived = (message) => {
             const payload = JSON.parse(message.payloadString);
-            if (payload.command === "$RALLResp") updateDeviceListUI(payload.devices);
+            
+            // Handle device list response from server
+            if (payload.command === "$RALLResp") {
+                updateDeviceListUI(payload.devices);
+                return;
+            }
+            
+            // Handle real-time status changes — refresh device list immediately
+            if (message.destinationName === "esp32-in/status" || message.destinationName === "classroom/111/pi_status") {
+                console.log("📱 Device status changed, refreshing device list...");
+                fetchDevices();
+            }
         };
+        
         const options = {
-            useSSL: true, userName: MQTT_USER, password: MQTT_PASS,
+            useSSL: true, 
+            userName: MQTT_USER, 
+            password: MQTT_PASS,
             onSuccess: () => { 
                 isConnected = true; 
                 updateStatus("Online", "green"); 
                 mqttClient.subscribe("raspberry/data_response"); 
+                mqttClient.subscribe("esp32-in/status");          // NEW: ESP32 real-time status
+                mqttClient.subscribe("classroom/111/pi_status");   // NEW: Pi real-time status
                 fetchDevices(); 
+                
+                // NEW: Auto-refresh device list every 30 seconds as a fallback
+                setInterval(() => { 
+                    if (isConnected) fetchDevices(); 
+                }, 30000);
             },
             onFailure: (err) => { 
                 console.error("MQTT Failed:", err); 
@@ -242,16 +264,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateDeviceListUI(devices) {
         if (!devices || devices.length === 0) {
-            const fallbackDevices = [
-                { module_id: "esp32-classroom-111", node_name: "Classroom 111 ESP32", device_type: "esp32", network: "enit", nbm: "1" },
-                { module_id: "pi-111", node_name: "Classroom 111 Raspberry Pi", device_type: "pi", network: "enit", nbm: "1" }
-            ];
-            deviceList.innerHTML = fallbackDevices.map(d => `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200"><strong>${d.module_id}</strong><br><small class="text-gray-500">Fallback Device (MQTT Offline)</small></div>`).join('');
-            deviceSelect.innerHTML = '<option value="">-- Select --</option>' + fallbackDevices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name}</option>`).join('');
+            deviceList.innerHTML = `
+                <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                    <p class="text-red-600 font-bold text-sm">⚠️ No devices online</p>
+                    <p class="text-gray-500 text-xs mt-2">Make sure ESP32 and Raspberry Pi are powered on and connected to WiFi.</p>
+                </div>`;
+            deviceSelect.innerHTML = '<option value="">-- No Devices Online --</option>';
             return;
         }
-        deviceList.innerHTML = devices.map(d => `<div class="bg-slate-50 p-3 rounded-lg border border-slate-200"><strong>${d.module_id}</strong></div>`).join('');
-        deviceSelect.innerHTML = '<option value="">-- Select Target Devices --</option>' + devices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name || d.module_id}</option>`).join('');
+        
+        deviceList.innerHTML = devices.map(d => `
+            <div class="bg-green-50 p-3 rounded-lg border border-green-200 flex justify-between items-center">
+                <div>
+                    <strong class="text-gray-800">${d.module_id}</strong><br>
+                    <small class="text-gray-500">${(d.device_type || '').toUpperCase()} | Network: ${d.network || 'enit'}</small>
+                </div>
+                <span class="px-2 py-1 rounded-full text-xs font-bold text-white bg-green-500">ONLINE</span>
+            </div>
+        `).join('');
+        
+        deviceSelect.innerHTML = '<option value="">-- Select Target Devices --</option>' + 
+            devices.map(d => `<option value="${d.module_id}" data-type="${d.device_type}" data-network="${d.network}" data-nbm="${d.nbm}">${d.node_name || d.module_id}</option>`).join('');
     }
 
     async function fetchDevices() {
@@ -259,6 +292,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const message = new Paho.MQTT.Message(JSON.stringify({ command: "$RALL" }));
             message.destinationName = "raspberry/data_request";
             mqttClient.send(message);
+            
+            // Fallback in case server doesn't respond
             setTimeout(() => { 
                 if (deviceSelect.options.length <= 1) updateDeviceListUI([]); 
             }, 3000);
