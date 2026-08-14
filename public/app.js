@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // PASTE YOUR OPENROUTER API KEY HERE
+    // YOUR OPENROUTER API KEY
     const OPENROUTER_API_KEY = "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";
     
     let mqttClient;
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF TO IMAGE + GOOGLE GEMINI (via OpenRouter) ======
+    // ====== PDF TO IMAGE + LLAMA-3.2 VISION (via OpenRouter) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -155,6 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 6. Do NOT invent classes. Only extract what you see in the squares.
                 7. Ensure all times are strictly 24-hour format HH:MM.
                 8. Translate French days to English (Lundi -> Monday).
+                9. Respond ONLY with a valid JSON object. No markdown, no explanations.
                 
                 Return a valid JSON object:
                 {
@@ -177,12 +178,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         'Authorization': `Bearer ${OPENROUTER_API_KEY}`
                     },
                     body: JSON.stringify({
-                        model: "google/gemini-flash-1.5:free",
+                        model: "meta-llama/llama-3.2-90b-vision-instruct:free",
                         messages: [
                             { role: "user", content: contentArray }
                         ],
-                        temperature: 0.1,
-                        response_format: { type: "json_object" }
+                        temperature: 0.1
                     })
                 });
 
