@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // YOUR OPENROUTER API KEY
-    const OPENROUTER_API_KEY = "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";
+    // USING GROQ (100% FREE, NO CREDIT CARD)
+    const GROQ_API_KEY = "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";
     
     let mqttClient;
     let isConnected = false;
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF TO IMAGE + LLAMA-3.2 VISION (via OpenRouter) ======
+    // ====== PDF TO IMAGE + GROQ VISION AI ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -171,14 +171,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     contentArray.push({ type: "image_url", image_url: { url: img } });
                 });
 
-                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`
+                        'Authorization': `Bearer ${GROQ_API_KEY}`
                     },
                     body: JSON.stringify({
-                        model: "meta-llama/llama-3.2-90b-vision-instruct:free",
+                        model: "llama-3.2-90b-vision-preview",
                         messages: [
                             { role: "user", content: contentArray }
                         ],
