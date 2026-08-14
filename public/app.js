@@ -9,7 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const MQTT_USER = "enitAttendanceSystem";
     const MQTT_PASS = "enitAttendanceSystem123";
     
-    // USING GROQ (100% FREE, NO CREDIT CARD)
     const GROQ_API_KEY = "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";
     
     let mqttClient;
@@ -101,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF TO IMAGE + GROQ VISION AI ======
+    // ====== PDF TO IMAGE + LLAMA-4 VISION (via Groq) ======
     if (window.pdfjsLib) {
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
@@ -178,7 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         'Authorization': `Bearer ${GROQ_API_KEY}`
                     },
                     body: JSON.stringify({
-                        model: "llama-3.2-90b-vision-preview",
+                        model: "meta-llama/llama-4-scout-17b-16b-instruct",
                         messages: [
                             { role: "user", content: contentArray }
                         ],
