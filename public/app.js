@@ -101,6 +101,21 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
+    // ====== PDF FILE NAME DISPLAY ======
+    pdfUpload.addEventListener('change', () => {
+        const fileName = pdfUpload.files[0] ? pdfUpload.files[0].name : '';
+        const fileNameEl = document.getElementById('fileName');
+        const dropzoneText = document.getElementById('dropzoneText');
+        
+        if(fileName) {
+            fileNameEl.innerText = fileName;
+            dropzoneText.innerText = 'File ready! Click button above to extract.';
+        } else {
+            fileNameEl.innerText = '';
+            dropzoneText.innerText = 'Drop PDF here or click to browse';
+        }
+    });
+
     // ====== GOOGLE GEMINI 3.5 FLASH NATIVE PDF EXTRACTION ======
     parsePdfBtn.addEventListener('click', async () => {
         const file = pdfUpload.files[0];
@@ -192,7 +207,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start)));
-                renderPreview(); updateSendButton();
+                renderPreview(); 
+                updateSendButton();
                 pdfStatus.innerText = `✅ Success! AI organized and added ${addedCount} classes.`;
                 
             } catch (e) {
@@ -235,11 +251,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 isConnected = true; 
                 updateStatus("Online", "green"); 
                 mqttClient.subscribe("raspberry/data_response"); 
-                mqttClient.subscribe("esp32-in/status");          // NEW: ESP32 real-time status
-                mqttClient.subscribe("classroom/111/pi_status");   // NEW: Pi real-time status
+                mqttClient.subscribe("esp32-in/status");          // ESP32 real-time status
+                mqttClient.subscribe("classroom/111/pi_status");   // Pi real-time status
                 fetchDevices(); 
                 
-                // NEW: Auto-refresh device list every 30 seconds as a fallback
+                // Auto-refresh device list every 30 seconds as a fallback
                 setInterval(() => { 
                     if (isConnected) fetchDevices(); 
                 }, 30000);
@@ -308,7 +324,33 @@ document.addEventListener('DOMContentLoaded', () => {
         return h * 60 + m; 
     }
     
-    window.deleteSlot = (day, index) => { scheduleData.schedule[day].splice(index, 1); renderPreview(); updateSendButton(); };
+    window.deleteSlot = (day, index) => { 
+        scheduleData.schedule[day].splice(index, 1); 
+        renderPreview(); 
+        updateSendButton(); 
+    };
+
+    // EDIT SLOT LOGIC - Loads slot data back into the form
+    window.editSlot = (day, index) => {
+        const slot = scheduleData.schedule[day][index];
+        
+        // Load values into the form inputs
+        slotDay.value = day;
+        slotStartTime.value = slot.start;
+        slotEndTime.value = slot.end;
+        slotSubject.value = slot.subject;
+        slotProfessor.value = slot.professor;
+        slotSection.value = slot.section;
+        
+        // Remove the old slot so we can save the updated one
+        scheduleData.schedule[day].splice(index, 1);
+        renderPreview();
+        updateSendButton();
+        
+        // Scroll up to the form so the user can edit
+        document.getElementById('addSlotBtn').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        slotSubject.focus(); // Put cursor in subject box
+    };
 
     addSlotBtn.addEventListener('click', () => {
         const day = slotDay.value, startTime = slotStartTime.value, endTime = slotEndTime.value;
@@ -316,24 +358,63 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!day || !startTime || !endTime || !subject) return alert("Missing fields");
         scheduleData.schedule[day].push({ start: startTime, end: endTime, subject, professor, section });
         scheduleData.schedule[day].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
-        renderPreview(); updateSendButton();
+        renderPreview(); 
+        updateSendButton();
+        
+        // Clear subject field for faster entry
+        slotSubject.value = '';
+        slotSubject.focus();
     });
 
-    resetScheduleBtn.addEventListener('click', () => { Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day] = []); renderPreview(); updateSendButton(); });
+    resetScheduleBtn.addEventListener('click', () => { 
+        Object.keys(scheduleData.schedule).forEach(day => scheduleData.schedule[day] = []); 
+        renderPreview(); 
+        updateSendButton(); 
+    });
+    
     refreshBtn.addEventListener('click', fetchDevices);
 
+    // MODERN SCHEDULE PREVIEW RENDER
     function renderPreview() {
-        let html = '<div class="space-y-3">';
+        let html = '<div class="space-y-4">';
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].forEach(day => {
             const slots = scheduleData.schedule[day];
-            html += `<div class="mb-2"><div class="flex justify-between items-center mb-1 border-b border-slate-200 pb-1"><strong class="text-blue-800 text-sm">${day}</strong><span class="text-xs font-medium ${slots.length > 0 ? 'text-blue-600' : 'text-gray-400'}">${slots.length} Slots</span></div>`;
+            
+            // Modern Day Container
+            html += `<div class="bg-slate-50 rounded-xl p-3 border border-slate-200">`;
+            html += `<div class="flex justify-between items-center mb-2 border-b border-slate-300 pb-2">
+                        <strong class="text-indigo-800 text-md font-bold">${day}</strong>
+                        <span class="text-xs font-bold ${slots.length > 0 ? 'text-indigo-600 bg-indigo-100 px-2 py-1 rounded-full' : 'text-gray-400 bg-gray-100 px-2 py-1 rounded-full'}">${slots.length} Slots</span>
+                     </div>`;
+            
             if (slots.length > 0) {
-                html += `<div class="space-y-1">`;
+                html += `<div class="space-y-2">`;
                 slots.forEach((slot, index) => {
-                    html += `<div class="flex justify-between items-center bg-white p-2 rounded-md border border-slate-100 text-left"><div class="flex-grow"><div class="font-semibold text-gray-800 text-sm"><span class="text-blue-600">${slot.start}</span> - <span class="text-red-500">${slot.end}</span> : ${slot.subject}</div><div class="text-xs text-gray-500 mt-1">${slot.professor} | ${slot.section}</div></div><button onclick="deleteSlot('${day}', ${index})" class="ml-2 text-gray-300 hover:text-red-500 transition p-1">❌</button></div>`;
+                    // Modern Slot Card with Edit/Delete buttons
+                    html += `
+                    <div class="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-slate-100 hover:border-indigo-300 transition group">
+                        <div class="flex-grow">
+                            <div class="flex items-center space-x-2 mb-1">
+                                <span class="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md text-xs font-bold">${slot.start}</span>
+                                <span class="text-gray-300 text-xs">→</span>
+                                <span class="text-red-500 bg-red-50 px-2 py-0.5 rounded-md text-xs font-bold">${slot.end}</span>
+                            </div>
+                            <div class="font-semibold text-gray-900 text-sm">${slot.subject}</div>
+                            <div class="text-xs text-gray-500 mt-1 flex gap-3">
+                                <span>👤 ${slot.professor || 'N/A'}</span> 
+                                <span>🎓 ${slot.section || 'N/A'}</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1 ml-2 opacity-0 group-hover:opacity-100 transition">
+                            <button onclick="editSlot('${day}', ${index})" class="text-blue-500 hover:bg-blue-50 p-1.5 rounded-md transition" title="Edit Slot">✏️</button>
+                            <button onclick="deleteSlot('${day}', ${index})" class="text-red-500 hover:bg-red-50 p-1.5 rounded-md transition" title="Delete Slot">🗑️</button>
+                        </div>
+                    </div>`;
                 });
                 html += `</div>`;
-            } else { html += `<p class="text-gray-400 text-xs italic py-1">No slots</p>`; }
+            } else { 
+                html += `<p class="text-gray-400 text-xs italic py-2 text-center">No classes scheduled</p>`; 
+            }
             html += `</div>`;
         });
         html += '</div>';
@@ -346,7 +427,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sendScheduleBtn.innerText = total > 0 ? `🚀 Send Schedule (${total} Slots)` : "Add Slots First";
     }
 
-        sendScheduleBtn.addEventListener('click', async () => {
+    // SEND SCHEDULE LOGIC
+    sendScheduleBtn.addEventListener('click', async () => {
         const selectedOptions = Array.from(deviceSelect.selectedOptions);
         let total = 0; Object.values(scheduleData.schedule).forEach(d => total += d.length);
         if (selectedOptions.length === 0 || total === 0) return alert("Select device and add slots");
