@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sendScheduleBtn.innerText = total > 0 ? `🚀 Send Schedule (${total} Slots)` : "Add Slots First";
     }
 
-    sendScheduleBtn.addEventListener('click', async () => {
+        sendScheduleBtn.addEventListener('click', async () => {
         const selectedOptions = Array.from(deviceSelect.selectedOptions);
         let total = 0; Object.values(scheduleData.schedule).forEach(d => total += d.length);
         if (selectedOptions.length === 0 || total === 0) return alert("Select device and add slots");
@@ -355,11 +355,12 @@ document.addEventListener('DOMContentLoaded', () => {
         scheduleData.validity.to = validTo.value;
 
         try {
+            // FIX: Added { onConflict: 'classroom_id' } so it updates instead of throwing duplicate error
             const { error: supabaseError } = await supabase.from('schedules').upsert({ 
                 classroom_id: scheduleData.classroom, 
                 validity: scheduleData.validity, 
                 schedule_data: scheduleData.schedule 
-            });
+            }, { onConflict: 'classroom_id' });
             
             if (supabaseError) throw new Error(`Database Error: ${supabaseError.message}`);
 
