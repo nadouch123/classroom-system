@@ -101,7 +101,43 @@ document.addEventListener('DOMContentLoaded', () => {
         return dateStr;
     }
 
-    // ====== PDF FILE NAME DISPLAY ======
+    // ====== DRAG & DROP LOGIC ======
+    const dropzone = document.getElementById('dropzone');
+    
+    // Click to browse
+    dropzone.addEventListener('click', () => pdfUpload.click());
+
+    // Highlight dropzone when dragging over
+    dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.classList.add('bg-indigo-200', 'border-indigo-500');
+        dropzone.classList.remove('bg-indigo-50', 'border-indigo-300');
+    });
+
+    // Remove highlight when leaving
+    dropzone.addEventListener('dragleave', () => {
+        dropzone.classList.remove('bg-indigo-200', 'border-indigo-500');
+        dropzone.classList.add('bg-indigo-50', 'border-indigo-300');
+    });
+
+    // Handle the Drop
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('bg-indigo-200', 'border-indigo-500');
+        dropzone.classList.add('bg-indigo-50', 'border-indigo-300');
+
+        if (e.dataTransfer.files.length) {
+            // Assign the dropped file to the hidden input
+            pdfUpload.files = e.dataTransfer.files;
+            
+            // Update the UI text
+            const fileName = pdfUpload.files[0].name;
+            document.getElementById('fileName').innerText = fileName;
+            document.getElementById('dropzoneText').innerText = 'File ready! Click button above to extract.';
+        }
+    });
+
+    // Handle normal click-to-browse file selection
     pdfUpload.addEventListener('change', () => {
         const fileName = pdfUpload.files[0] ? pdfUpload.files[0].name : '';
         const fileNameEl = document.getElementById('fileName');
